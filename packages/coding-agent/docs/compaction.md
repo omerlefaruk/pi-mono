@@ -32,7 +32,13 @@ Auto-compaction triggers when:
 contextTokens > contextWindow - reserveTokens
 ```
 
-By default, `reserveTokens` is 16384 tokens (configurable in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settings.json`). This leaves room for the LLM's response.
+Or, if `compaction.maxContextTokens` is configured:
+
+```
+contextTokens >= maxContextTokens
+```
+
+By default, `reserveTokens` is 16384 tokens (configurable in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settings.json`). This leaves room for the LLM's response. `maxContextTokens` is optional and overrides the relative `reserveTokens` trigger when set.
 
 You can also trigger manually with `/compact [instructions]`, where optional instructions focus the summary.
 
@@ -380,7 +386,8 @@ Configure compaction in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settin
   "compaction": {
     "enabled": true,
     "reserveTokens": 16384,
-    "keepRecentTokens": 20000
+    "keepRecentTokens": 20000,
+    "maxContextTokens": 170000
   }
 }
 ```
@@ -388,7 +395,8 @@ Configure compaction in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settin
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `enabled` | `true` | Enable auto-compaction |
-| `reserveTokens` | `16384` | Tokens to reserve for LLM response |
+| `reserveTokens` | `16384` | Tokens to reserve for LLM response when using the relative trigger |
 | `keepRecentTokens` | `20000` | Recent tokens to keep (not summarized) |
+| `maxContextTokens` | - | Absolute context token threshold for auto-compaction. Overrides `reserveTokens` when set. |
 
 Disable auto-compaction with `"enabled": false`. You can still compact manually with `/compact`.

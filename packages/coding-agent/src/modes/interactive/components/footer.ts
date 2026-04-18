@@ -26,6 +26,17 @@ function formatTokens(count: number): string {
 	return `${Math.round(count / 1000000)}M`;
 }
 
+function getCompactionTriggerTokens(session: AgentSession, contextWindow: number): number | null {
+	const settings = session.settingsManager.getCompactionSettings();
+	if (settings.maxContextTokens !== undefined) {
+		return settings.maxContextTokens;
+	}
+	if (contextWindow <= 0) {
+		return null;
+	}
+	return Math.max(0, contextWindow - settings.reserveTokens);
+}
+
 /**
  * Footer component that shows pwd, token stats, and context usage.
  * Computes token/context stats from session, gets git branch and extension statuses from provider.
@@ -86,8 +97,8 @@ export class FooterComponent implements Component {
 		// After compaction, tokens are unknown until the next LLM response.
 		const contextUsage = this.session.getContextUsage();
 		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;
-		const contextPercentValue = contextUsage?.percent ?? 0;
-		const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
+		const contextTokens = contextUsage?.tokens ?? null;
+		const compactionTriggerTokens = getCompactionTriggerTokens(this.session, contextWindow);
 
 		// Replace home directory with ~
 		let pwd = this.session.sessionManager.getCwd();
@@ -115,28 +126,31 @@ export class FooterComponent implements Component {
 		if (totalCacheRead) statsParts.push(`R${formatTokens(totalCacheRead)}`);
 		if (totalCacheWrite) statsParts.push(`W${formatTokens(totalCacheWrite)}`);
 
-		// Show cost with "(sub)" indicator if using OAuth subscription
 		const usingSubscription = state.model ? this.session.modelRegistry.isUsingOAuth(state.model) : false;
-		if (totalCost || usingSubscription) {
+		if (totalCost > 0) {
 			const costStr = `$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
 			statsParts.push(costStr);
 		}
 
-		// Colorize context percentage based on usage
-		let contextPercentStr: string;
+		// Show current context against the compaction trigger when possible.
+		let contextProgressStr: string;
 		const autoIndicator = this.autoCompactEnabled ? " (auto)" : "";
-		const contextPercentDisplay =
-			contextPercent === "?"
-				? `?/${formatTokens(contextWindow)}${autoIndicator}`
-				: `${contextPercent}%/${formatTokens(contextWindow)}${autoIndicator}`;
-		if (contextPercentValue > 90) {
-			contextPercentStr = theme.fg("error", contextPercentDisplay);
-		} else if (contextPercentValue > 70) {
-			contextPercentStr = theme.fg("warning", contextPercentDisplay);
+		const contextProgressDisplay =
+			compactionTriggerTokens === null
+				? `ctx ?${autoIndicator}`
+				: `ctx ${contextTokens === null ? "?" : formatTokens(contextTokens)}/${formatTokens(compactionTriggerTokens)}${autoIndicator}`;
+		const contextTriggerPercent =
+			contextTokens !== null && compactionTriggerTokens && compactionTriggerTokens > 0
+				? (contextTokens / compactionTriggerTokens) * 100
+				: 0;
+		if (contextTriggerPercent >= 100) {
+			contextProgressStr = theme.fg("error", contextProgressDisplay);
+		} else if (contextTriggerPercent >= 80) {
+			contextProgressStr = theme.fg("warning", contextProgressDisplay);
 		} else {
-			contextPercentStr = contextPercentDisplay;
+			contextProgressStr = contextProgressDisplay;
 		}
-		statsParts.push(contextPercentStr);
+		statsParts.push(contextProgressStr);
 
 		let statsLeft = statsParts.join(" ");
 

@@ -110,6 +110,7 @@ describe("AgentSession auto-compaction queue resume", () => {
 		expect(session.agent.hasQueuedMessages()).toBe(true);
 
 		const continueSpy = vi.spyOn(session.agent, "continue").mockResolvedValue();
+		const promptSpy = vi.spyOn(session, "prompt").mockResolvedValue();
 
 		const runAutoCompaction = (
 			session as unknown as {
@@ -118,9 +119,39 @@ describe("AgentSession auto-compaction queue resume", () => {
 		)._runAutoCompaction.bind(session);
 
 		await runAutoCompaction("threshold", false);
-		await vi.advanceTimersByTimeAsync(100);
+		await vi.advanceTimersByTimeAsync(0);
 
 		expect(continueSpy).toHaveBeenCalledTimes(1);
+		expect(promptSpy).not.toHaveBeenCalled();
+	});
+
+	it("should auto-queue a synthetic follow-up and continue after threshold compaction with no queued work", async () => {
+		const continueSpy = vi.spyOn(session.agent, "continue").mockResolvedValue();
+		const followUpSpy = vi.spyOn(session.agent, "followUp");
+		const promptSpy = vi.spyOn(session, "prompt").mockResolvedValue();
+
+		const runAutoCompaction = (
+			session as unknown as {
+				_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<void>;
+			}
+		)._runAutoCompaction.bind(session);
+
+		await runAutoCompaction("threshold", false);
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(continueSpy).toHaveBeenCalledTimes(1);
+		expect(promptSpy).not.toHaveBeenCalled();
+		expect(followUpSpy).toHaveBeenCalledWith(
+			expect.objectContaining({
+				role: "user",
+				content: [
+					{
+						type: "text",
+						text: "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed.",
+					},
+				],
+			}),
+		);
 	});
 
 	it("should not compact repeatedly after overflow recovery already attempted", async () => {

@@ -20,6 +20,11 @@ function createSession(options: {
 	reasoning?: boolean;
 	thinkingLevel?: string;
 	usage?: AssistantUsage;
+	contextTokens?: number | null;
+	maxContextTokens?: number;
+	reserveTokens?: number;
+	contextWindow?: number;
+	usingOAuth?: boolean;
 }): AgentSession {
 	const usage = options.usage;
 	const entries =
@@ -35,12 +40,16 @@ function createSession(options: {
 					},
 				];
 
+	const contextWindow = options.contextWindow ?? 200_000;
+	const contextTokens = options.contextTokens ?? 24_600;
+	const percent = contextTokens === null ? null : (contextTokens / contextWindow) * 100;
+
 	const session = {
 		state: {
 			model: {
 				id: options.modelId ?? "test-model",
 				provider: options.provider ?? "test",
-				contextWindow: 200_000,
+				contextWindow,
 				reasoning: options.reasoning ?? false,
 			},
 			thinkingLevel: options.thinkingLevel ?? "off",
@@ -50,9 +59,17 @@ function createSession(options: {
 			getSessionName: () => options.sessionName,
 			getCwd: () => "/tmp/project",
 		},
-		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
+		settingsManager: {
+			getCompactionSettings: () => ({
+				enabled: true,
+				reserveTokens: options.reserveTokens ?? 16_384,
+				keepRecentTokens: 20_000,
+				maxContextTokens: options.maxContextTokens,
+			}),
+		},
+		getContextUsage: () => ({ contextWindow, tokens: contextTokens, percent }),
 		modelRegistry: {
-			isUsingOAuth: () => false,
+			isUsingOAuth: () => options.usingOAuth ?? false,
 		},
 	};
 
@@ -104,6 +121,8 @@ describe("FooterComponent width handling", () => {
 				cacheWrite: 0,
 				cost: { total: 1.234 },
 			},
+			contextTokens: 168_900,
+			maxContextTokens: 170_000,
 		});
 		const footer = new FooterComponent(session, createFooterData(2));
 
@@ -111,5 +130,43 @@ describe("FooterComponent width handling", () => {
 		for (const line of lines) {
 			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 		}
+	});
+
+	it("shows current context against the compaction trigger", () => {
+		const session = createSession({
+			sessionName: "",
+			contextTokens: 168_900,
+			maxContextTokens: 170_000,
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		const rendered = footer
+			.render(120)
+			.join("\n")
+			.replace(/\u001b\[[0-9;]*m/g, "");
+
+		expect(rendered).toContain("ctx 169k/170k (auto)");
+	});
+
+	it("hides zero-cost subscription badges", () => {
+		const session = createSession({
+			sessionName: "",
+			usingOAuth: true,
+			usage: {
+				input: 100,
+				output: 200,
+				cacheRead: 0,
+				cacheWrite: 0,
+				cost: { total: 0 },
+			},
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		const rendered = footer
+			.render(120)
+			.join("\n")
+			.replace(/\u001b\[[0-9;]*m/g, "");
+
+		expect(rendered).not.toContain("$0.000 (sub)");
 	});
 });

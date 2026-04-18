@@ -232,6 +232,8 @@ const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "hi
 
 /** Thinking levels including xhigh (for supported models) */
 const THINKING_LEVELS_WITH_XHIGH: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+const AUTO_COMPACTION_CONTINUE_PROMPT =
+	"Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed.";
 
 // ============================================================================
 // AgentSession Class
@@ -1304,10 +1306,10 @@ export class AgentSession {
 
 	/**
 	 * Send a user message to the agent. Always triggers a turn.
-	 * When the agent is streaming, use deliverAs to specify how to queue the message.
+	 * When the session is busy and deliverAs is omitted, defaults to followUp.
 	 *
 	 * @param content User message content (string or content array)
-	 * @param options.deliverAs Delivery mode when streaming: "steer" or "followUp"
+	 * @param options.deliverAs Delivery mode when busy: "steer" or "followUp"
 	 */
 	async sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
@@ -1333,10 +1335,16 @@ export class AgentSession {
 			if (images.length === 0) images = undefined;
 		}
 
+		const deliverAs = options?.deliverAs ?? (this.isStreaming || this.isCompacting ? "followUp" : undefined);
+		if (deliverAs === "followUp" && this.isCompacting && !this.isStreaming) {
+			await this._queueFollowUp(text, images);
+			return;
+		}
+
 		// Use prompt() with expandPromptTemplates: false to skip command handling and template expansion
 		await this.prompt(text, {
 			expandPromptTemplates: false,
-			streamingBehavior: options?.deliverAs,
+			streamingBehavior: deliverAs,
 			images,
 			source: "extension",
 		});
@@ -1774,7 +1782,7 @@ export class AgentSession {
 	 *
 	 * Two cases:
 	 * 1. Overflow: LLM returned context overflow error, remove error message from agent state, compact, auto-retry
-	 * 2. Threshold: Context over threshold, compact, NO auto-retry (user continues manually)
+	 * 2. Threshold: Context over threshold, compact, then transparently resume if work remains
 	 *
 	 * @param assistantMessage The assistant message to check
 	 * @param skipAbortedCheck If false, include aborted messages (for pre-prompt check). Default: true
@@ -1857,6 +1865,22 @@ export class AgentSession {
 		if (shouldCompact(contextTokens, contextWindow, settings)) {
 			await this._runAutoCompaction("threshold", false);
 		}
+	}
+
+	private _schedulePostCompactionResume(action: "continue" | "thresholdPrompt"): void {
+		queueMicrotask(() => {
+			if (action === "continue") {
+				this.agent.continue().catch(() => {});
+				return;
+			}
+
+			this.agent.followUp({
+				role: "user",
+				content: [{ type: "text", text: AUTO_COMPACTION_CONTINUE_PROMPT }],
+				timestamp: Date.now(),
+			});
+			this.agent.continue().catch(() => {});
+		});
 	}
 
 	/**
@@ -2008,15 +2032,15 @@ export class AgentSession {
 					this.agent.state.messages = messages.slice(0, -1);
 				}
 
-				setTimeout(() => {
-					this.agent.continue().catch(() => {});
-				}, 100);
+				this._schedulePostCompactionResume("continue");
 			} else if (this.agent.hasQueuedMessages()) {
 				// Auto-compaction can complete while follow-up/steering/custom messages are waiting.
 				// Kick the loop so queued messages are actually delivered.
-				setTimeout(() => {
-					this.agent.continue().catch(() => {});
-				}, 100);
+				this._schedulePostCompactionResume("continue");
+			} else if (reason === "threshold") {
+				// Match harnesses like OpenCode: compaction should feel like internal
+				// housekeeping, not an interruption that requires a manual nudge.
+				this._schedulePostCompactionResume("thresholdPrompt");
 			}
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : "compaction failed";

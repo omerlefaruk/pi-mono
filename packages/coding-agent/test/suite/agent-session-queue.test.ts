@@ -122,6 +122,40 @@ describe("AgentSession queue characterization", () => {
 		expect(getAssistantTexts(harness)).toContain("saw steer");
 	});
 
+	it("defaults extension-origin user messages to follow-up while streaming", async () => {
+		let extensionApi: ExtensionAPI | undefined;
+		const waiting = await createWaitingHarness({
+			extensionFactories: [
+				(pi) => {
+					extensionApi = pi;
+				},
+			],
+		});
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("original turn complete"),
+			(context) => {
+				const sawFollowUp = context.messages.some(
+					(message) => message.role === "user" && getMessageText(message) === "default follow-up",
+				);
+				return fauxAssistantMessage(sawFollowUp ? "saw default follow-up" : "missing default follow-up");
+			},
+		]);
+
+		await waitForToolStart;
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		extensionApi?.sendUserMessage("default follow-up");
+		releaseToolExecution();
+		await promptPromise;
+
+		expect(getUserTexts(harness)).toEqual(["start", "default follow-up"]);
+		expect(getAssistantTexts(harness)).toEqual(["", "original turn complete", "saw default follow-up"]);
+	});
+
 	it("delivers follow-up messages only after the current run finishes", async () => {
 		const waiting = await createWaitingHarness();
 		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;

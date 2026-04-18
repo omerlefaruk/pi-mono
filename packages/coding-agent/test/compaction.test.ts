@@ -245,6 +245,19 @@ describe("shouldCompact", () => {
 
 		expect(shouldCompact(95000, 100000, settings)).toBe(false);
 	});
+
+	it("should prefer absolute maxContextTokens when configured", () => {
+		const settings: CompactionSettings = {
+			enabled: true,
+			reserveTokens: 1000,
+			keepRecentTokens: 20000,
+			maxContextTokens: 170000,
+		};
+
+		expect(shouldCompact(169999, 272000, settings)).toBe(false);
+		expect(shouldCompact(170000, 272000, settings)).toBe(true);
+		expect(shouldCompact(171000, 272000, settings)).toBe(true);
+	});
 });
 
 describe("findCutPoint", () => {

@@ -1182,7 +1182,7 @@ export interface ExtensionAPI {
 
 	/**
 	 * Send a user message to the agent. Always triggers a turn.
-	 * When the agent is streaming, use deliverAs to specify how to queue the message.
+	 * When the session is busy and deliverAs is omitted, the message defaults to followUp.
 	 */
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],

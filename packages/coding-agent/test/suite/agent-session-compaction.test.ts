@@ -1,11 +1,15 @@
 import { type AssistantMessage, fauxAssistantMessage, type Model } from "@mariozechner/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createHarness, type Harness } from "./harness.js";
+import { createHarness, getMessageText, getUserTexts, type Harness } from "./harness.js";
 
 type SessionWithCompactionInternals = {
 	_checkCompaction: (assistantMessage: AssistantMessage, skipAbortedCheck?: boolean) => Promise<void>;
 	_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<void>;
 };
+
+async function waitForNextTick(): Promise<void> {
+	await new Promise((resolve) => process.nextTick(resolve));
+}
 
 function createUsage(totalTokens: number) {
 	return {
@@ -150,12 +154,105 @@ describe("AgentSession compaction characterization", () => {
 		});
 
 		const continueSpy = vi.spyOn(harness.session.agent, "continue").mockResolvedValue();
+		const promptSpy = vi.spyOn(harness.session, "prompt").mockResolvedValue();
 		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
 
 		await sessionInternals._runAutoCompaction("threshold", false);
-		await vi.advanceTimersByTimeAsync(100);
+		await vi.advanceTimersByTimeAsync(0);
 
 		expect(continueSpy).toHaveBeenCalledTimes(1);
+		expect(promptSpy).not.toHaveBeenCalled();
+	});
+
+	it("queues a synthetic follow-up and continues after threshold compaction with no queued work", async () => {
+		vi.useFakeTimers();
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: "auto compacted",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+							details: {},
+						},
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two")]);
+		await harness.session.prompt("first");
+		await harness.session.prompt("second");
+
+		const continueSpy = vi.spyOn(harness.session.agent, "continue").mockResolvedValue();
+		const followUpSpy = vi.spyOn(harness.session.agent, "followUp");
+		const promptSpy = vi.spyOn(harness.session, "prompt").mockResolvedValue();
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+
+		await sessionInternals._runAutoCompaction("threshold", false);
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(continueSpy).toHaveBeenCalledTimes(1);
+		expect(promptSpy).not.toHaveBeenCalled();
+		expect(followUpSpy).toHaveBeenCalledWith(
+			expect.objectContaining({
+				role: "user",
+				content: [
+					{
+						type: "text",
+						text: "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed.",
+					},
+				],
+			}),
+		);
+	});
+
+	it("queues extension-origin user messages during threshold compaction instead of erroring", async () => {
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: "auto compacted",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+							details: {},
+						},
+					}));
+					pi.on("session_compact", async () => {
+						pi.sendUserMessage("extension follow-up");
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("one"),
+			fauxAssistantMessage("two"),
+			(context) => {
+				const userTexts = context.messages
+					.filter((message) => message.role === "user")
+					.map((message) => getMessageText(message));
+				const sawExtensionFollowUp = userTexts.includes("extension follow-up");
+				return fauxAssistantMessage(
+					sawExtensionFollowUp ? "saw compaction follow-up" : "missing compaction follow-up",
+				);
+			},
+		]);
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+
+		await harness.session.prompt("first");
+		await harness.session.prompt("second");
+		await sessionInternals._runAutoCompaction("threshold", false);
+		await waitForNextTick();
+		await harness.session.agent.waitForIdle();
+
+		expect(getUserTexts(harness)).toContain("extension follow-up");
+		expect(harness.session.messages.at(-1)?.role).toBe("assistant");
+		expect(getMessageText(harness.session.messages.at(-1))).toBe("saw compaction follow-up");
 	});
 
 	it("does not retry overflow recovery more than once", async () => {
@@ -339,5 +436,25 @@ describe("AgentSession compaction characterization", () => {
 
 		expect(belowThresholdSpy).not.toHaveBeenCalled();
 		expect(disabledSpy).not.toHaveBeenCalled();
+	});
+
+	it("uses maxContextTokens as an absolute auto-compaction trigger when configured", async () => {
+		const harness = await createHarness({
+			settings: { compaction: { enabled: true, reserveTokens: 1, maxContextTokens: 170_000 } },
+			models: [{ id: "faux-1", contextWindow: 272_000 }],
+		});
+		harnesses.push(harness);
+		const internals = harness.session as unknown as SessionWithCompactionInternals;
+		const spy = vi.spyOn(internals, "_runAutoCompaction").mockResolvedValue();
+
+		await internals._checkCompaction(
+			createAssistant(harness, { stopReason: "stop", totalTokens: 169_999, timestamp: Date.now() }),
+		);
+		await internals._checkCompaction(
+			createAssistant(harness, { stopReason: "stop", totalTokens: 170_000, timestamp: Date.now() + 1 }),
+		);
+
+		expect(spy).toHaveBeenCalledTimes(1);
+		expect(spy).toHaveBeenCalledWith("threshold", false);
 	});
 });

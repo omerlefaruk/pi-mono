@@ -73,15 +73,17 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the Pi version update check. Use `--off
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `compaction.enabled` | boolean | `true` | Enable auto-compaction |
-| `compaction.reserveTokens` | number | `16384` | Tokens reserved for LLM response |
+| `compaction.reserveTokens` | number | `16384` | Tokens reserved for LLM response when using the relative trigger |
 | `compaction.keepRecentTokens` | number | `20000` | Recent tokens to keep (not summarized) |
+| `compaction.maxContextTokens` | number | - | Absolute context token threshold for auto-compaction. Overrides `reserveTokens` when set. |
 
 ```json
 {
   "compaction": {
     "enabled": true,
     "reserveTokens": 16384,
-    "keepRecentTokens": 20000
+    "keepRecentTokens": 20000,
+    "maxContextTokens": 170000
   }
 }
 ```
@@ -241,7 +243,8 @@ See [packages.md](packages.md) for package management details.
   "compaction": {
     "enabled": true,
     "reserveTokens": 16384,
-    "keepRecentTokens": 20000
+    "keepRecentTokens": 20000,
+    "maxContextTokens": 170000
   },
   "retry": {
     "enabled": true,
@@ -263,7 +266,7 @@ Project settings (`.pi/settings.json`) override global settings. Nested objects 
 // ~/.pi/agent/settings.json (global)
 {
   "theme": "dark",
-  "compaction": { "enabled": true, "reserveTokens": 16384 }
+  "compaction": { "enabled": true, "reserveTokens": 16384, "maxContextTokens": 170000 }
 }
 
 // .pi/settings.json (project)
@@ -274,6 +277,6 @@ Project settings (`.pi/settings.json`) override global settings. Nested objects 
 // Result
 {
   "theme": "dark",
-  "compaction": { "enabled": true, "reserveTokens": 8192 }
+  "compaction": { "enabled": true, "reserveTokens": 8192, "maxContextTokens": 170000 }
 }
 ```
