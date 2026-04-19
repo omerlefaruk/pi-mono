@@ -312,6 +312,35 @@ export function getLatestCompactionEntry(entries: SessionEntry[]): CompactionEnt
  * If leafId is provided, walks from that entry to root.
  * Handles compaction and branch summaries along the path.
  */
+function appendContextMessage(messages: AgentMessage[], entry: SessionEntry): void {
+	if (entry.type === "message") {
+		messages.push(entry.message);
+	} else if (entry.type === "custom_message") {
+		messages.push(
+			createCustomMessage(entry.customType, entry.content, entry.display, entry.details, entry.timestamp),
+		);
+	} else if (entry.type === "branch_summary" && entry.summary) {
+		messages.push(createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp));
+	}
+}
+
+export function buildCompactedMessages(pathEntries: SessionEntry[], compaction: CompactionEntry): AgentMessage[] {
+	const messages: AgentMessage[] = [
+		createCompactionSummaryMessage(compaction.summary, compaction.tokensBefore, compaction.timestamp),
+	];
+
+	let foundFirstKept = false;
+	for (const entry of pathEntries) {
+		if (entry.id === compaction.firstKeptEntryId) {
+			foundFirstKept = true;
+		}
+		if (!foundFirstKept) continue;
+		appendContextMessage(messages, entry);
+	}
+
+	return messages;
+}
+
 export function buildSessionContext(
 	entries: SessionEntry[],
 	leafId?: string | null,
@@ -375,18 +404,6 @@ export function buildSessionContext(
 	// 3. Emit messages after compaction
 	const messages: AgentMessage[] = [];
 
-	const appendMessage = (entry: SessionEntry) => {
-		if (entry.type === "message") {
-			messages.push(entry.message);
-		} else if (entry.type === "custom_message") {
-			messages.push(
-				createCustomMessage(entry.customType, entry.content, entry.display, entry.details, entry.timestamp),
-			);
-		} else if (entry.type === "branch_summary" && entry.summary) {
-			messages.push(createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp));
-		}
-	};
-
 	if (compaction) {
 		// Emit summary first
 		messages.push(createCompactionSummaryMessage(compaction.summary, compaction.tokensBefore, compaction.timestamp));
@@ -402,19 +419,19 @@ export function buildSessionContext(
 				foundFirstKept = true;
 			}
 			if (foundFirstKept) {
-				appendMessage(entry);
+				appendContextMessage(messages, entry);
 			}
 		}
 
 		// Emit messages after compaction
 		for (let i = compactionIdx + 1; i < path.length; i++) {
 			const entry = path[i];
-			appendMessage(entry);
+			appendContextMessage(messages, entry);
 		}
 	} else {
 		// No compaction - emit all messages, handle branch summaries and custom messages
 		for (const entry of path) {
-			appendMessage(entry);
+			appendContextMessage(messages, entry);
 		}
 	}
 

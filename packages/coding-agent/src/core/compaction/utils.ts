@@ -98,6 +98,39 @@ function truncateForSummary(text: string, maxChars: number): string {
 	return `${text.slice(0, maxChars)}\n\n[... ${truncatedChars} more characters truncated]`;
 }
 
+function collectTextContent(content: string | Array<{ type: string; text?: string }>): string {
+	if (typeof content === "string") return content;
+	if (content.length === 1) {
+		const block = content[0];
+		if (block?.type === "text" && typeof block.text === "string") {
+			return block.text;
+		}
+	}
+	let result = "";
+	for (const block of content) {
+		if (block.type === "text" && typeof block.text === "string") {
+			result += block.text;
+		}
+	}
+	return result;
+}
+
+function stringifyToolCallArguments(args: Record<string, unknown>): string {
+	let result = "";
+	let first = true;
+	for (const key in args) {
+		if (!Object.hasOwn(args, key)) continue;
+		if (!first) result += ", ";
+		result += `${key}=${JSON.stringify(args[key])}`;
+		first = false;
+	}
+	return result;
+}
+
+function appendSection(output: string, section: string): string {
+	return output ? `${output}\n\n${section}` : section;
+}
+
 /**
  * Serialize LLM messages to text for summarization.
  * This prevents the model from treating it as a conversation to continue.
@@ -107,58 +140,54 @@ function truncateForSummary(text: string, maxChars: number): string {
  * reasonable token budgets. Full content is not needed for summarization.
  */
 export function serializeConversation(messages: Message[]): string {
-	const parts: string[] = [];
+	let output = "";
 
 	for (const msg of messages) {
 		if (msg.role === "user") {
-			const content =
-				typeof msg.content === "string"
-					? msg.content
-					: msg.content
-							.filter((c): c is { type: "text"; text: string } => c.type === "text")
-							.map((c) => c.text)
-							.join("");
-			if (content) parts.push(`[User]: ${content}`);
-		} else if (msg.role === "assistant") {
-			const textParts: string[] = [];
-			const thinkingParts: string[] = [];
-			const toolCalls: string[] = [];
+			const content = collectTextContent(msg.content as string | Array<{ type: string; text?: string }>);
+			if (content) {
+				output = appendSection(output, `[User]: ${content}`);
+			}
+			continue;
+		}
+
+		if (msg.role === "assistant") {
+			let text = "";
+			let thinking = "";
+			let toolCalls = "";
 
 			for (const block of msg.content) {
 				if (block.type === "text") {
-					textParts.push(block.text);
+					text += text ? `\n${block.text}` : block.text;
 				} else if (block.type === "thinking") {
-					thinkingParts.push(block.thinking);
+					thinking += thinking ? `\n${block.thinking}` : block.thinking;
 				} else if (block.type === "toolCall") {
-					const args = block.arguments as Record<string, unknown>;
-					const argsStr = Object.entries(args)
-						.map(([k, v]) => `${k}=${JSON.stringify(v)}`)
-						.join(", ");
-					toolCalls.push(`${block.name}(${argsStr})`);
+					const toolCall = `${block.name}(${stringifyToolCallArguments(block.arguments as Record<string, unknown>)})`;
+					toolCalls += toolCalls ? `; ${toolCall}` : toolCall;
 				}
 			}
 
-			if (thinkingParts.length > 0) {
-				parts.push(`[Assistant thinking]: ${thinkingParts.join("\n")}`);
+			if (thinking) {
+				output = appendSection(output, `[Assistant thinking]: ${thinking}`);
 			}
-			if (textParts.length > 0) {
-				parts.push(`[Assistant]: ${textParts.join("\n")}`);
+			if (text) {
+				output = appendSection(output, `[Assistant]: ${text}`);
 			}
-			if (toolCalls.length > 0) {
-				parts.push(`[Assistant tool calls]: ${toolCalls.join("; ")}`);
+			if (toolCalls) {
+				output = appendSection(output, `[Assistant tool calls]: ${toolCalls}`);
 			}
-		} else if (msg.role === "toolResult") {
-			const content = msg.content
-				.filter((c): c is { type: "text"; text: string } => c.type === "text")
-				.map((c) => c.text)
-				.join("");
+			continue;
+		}
+
+		if (msg.role === "toolResult") {
+			const content = collectTextContent(msg.content as Array<{ type: string; text?: string }>);
 			if (content) {
-				parts.push(`[Tool result]: ${truncateForSummary(content, TOOL_RESULT_MAX_CHARS)}`);
+				output = appendSection(output, `[Tool result]: ${truncateForSummary(content, TOOL_RESULT_MAX_CHARS)}`);
 			}
 		}
 	}
 
-	return parts.join("\n\n");
+	return output;
 }
 
 // ============================================================================
