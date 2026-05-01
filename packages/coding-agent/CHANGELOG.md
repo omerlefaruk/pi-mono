@@ -2,9 +2,22 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added HALO-compatible local trace capture, trace indexing/query utilities, and a HALO example extension for data-driven pi harness analysis.
+- Added Pi Mem settings controls to interactive `/settings` for enable/auto-extract/auto-inject/privacy plus `storageBackend` and `extractionMode`.
+- Added docs coverage for Pi Mem namespace/project scoping, maintenance/purge safeguards, viewer flows, and tool surface (`pi_mem_maintenance`, `pi_mem_stats`, `pi_mem_feedback`).
+
+### Changed
+
+- Added default harness guidance to inspect bare paths before executing them and to verify unknown commands before running them.
+- Updated Pi Mem docs to reflect current behavior, including `storageBackend` auto/sqlite/jsonl fallback status and `extractionMode`/`extractionModel` scaffold status.
+
 ### Fixed
 
 - Fixed `pi.registerProvider()` to honor per-model `baseUrl` overrides ([#4063](https://github.com/badlogic/pi-mono/issues/4063)).
+- Fixed HALO tracing to avoid duplicate shutdown/error agent spans, summarize recursive halo_* trace-tool outputs, and normalize Git Bash path-converted slash commands.
+- Fixed Pi Mem HALO correlation by publishing active HALO trace/span context on the shared extension event bus and attaching Pi Mem operation spans to that active trace/span context when available.
 
 ## [0.71.1] - 2026-05-01
 

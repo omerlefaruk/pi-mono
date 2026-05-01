@@ -147,6 +147,44 @@ export {
 } from "./core/extensions/index.js";
 // Footer data provider (git branch + extension statuses - data not otherwise available to extensions)
 export type { ReadonlyFooterDataProvider } from "./core/footer-data-provider.js";
+export {
+	buildHaloTraceIndex,
+	createHaloExtension,
+	createSpanId,
+	createTraceId,
+	defaultHaloTracePath,
+	ensureHaloTraceIndex,
+	type HaloActiveSpan,
+	type HaloDatasetOverview,
+	type HaloExtensionOptions,
+	type HaloOversizedTraceSummary,
+	type HaloSpanRecord,
+	type HaloSpanResource,
+	type HaloSpanScope,
+	type HaloSpanStatus,
+	type HaloTraceCountResult,
+	type HaloTraceFilters,
+	type HaloTraceIndexMeta,
+	type HaloTraceIndexRow,
+	type HaloTraceQueryResult,
+	type HaloTraceSearchResult,
+	HaloTraceStore,
+	type HaloTraceSummary,
+	type HaloTraceView,
+	HaloTraceWriter,
+	type HaloTraceWriterOptions,
+	haloIndexMetaPathFor,
+	haloIndexPathFor,
+	loadHaloTraceIndex,
+	type RegisterHaloTraceToolsOptions,
+	registerHaloTraceTools,
+	summarizeAgentMessage,
+	summarizeContent,
+	summarizeHaloToolOutput,
+	summarizeToolResult,
+	toOtelTime,
+	truncateUnknown,
+} from "./core/halo/index.js";
 export { convertToLlm } from "./core/messages.js";
 export { ModelRegistry } from "./core/model-registry.js";
 export type {
@@ -158,6 +196,23 @@ export type {
 	ResolvedResource,
 } from "./core/package-manager.js";
 export { DefaultPackageManager } from "./core/package-manager.js";
+export {
+	createPiMemExtension,
+	defaultPiMemPath,
+	extractMemoryCandidatesFromMessage,
+	extractMemoryCandidatesFromToolResult,
+	formatInjectedMemories,
+	type PiMemCitation,
+	type PiMemExtensionOptions,
+	type PiMemRecord,
+	type PiMemRecordType,
+	type PiMemResolvedSettings,
+	type PiMemSearchInput,
+	type PiMemSettings,
+	PiMemStore,
+	redactLikelySecrets,
+	registerPiMemTools,
+} from "./core/pi-mem/index.js";
 export type { ResourceCollision, ResourceDiagnostic, ResourceLoader } from "./core/resource-loader.js";
 export { DefaultResourceLoader, loadProjectContextFiles } from "./core/resource-loader.js";
 // SDK for programmatic usage

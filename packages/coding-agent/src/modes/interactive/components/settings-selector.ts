@@ -55,6 +55,12 @@ export interface SettingsConfig {
 	clearOnShrink: boolean;
 	showTerminalProgress: boolean;
 	warnings: WarningSettings;
+	piMemEnabled: boolean;
+	piMemAutoExtract: boolean;
+	piMemAutoInject: boolean;
+	piMemPrivacy: "off" | "mask" | "strict";
+	piMemStorageBackend: "jsonl" | "sqlite" | "auto";
+	piMemExtractionMode: "heuristic" | "model";
 }
 
 export interface SettingsCallbacks {
@@ -82,6 +88,12 @@ export interface SettingsCallbacks {
 	onClearOnShrinkChange: (enabled: boolean) => void;
 	onShowTerminalProgressChange: (enabled: boolean) => void;
 	onWarningsChange: (warnings: WarningSettings) => void;
+	onPiMemEnabledChange: (enabled: boolean) => void;
+	onPiMemAutoExtractChange: (enabled: boolean) => void;
+	onPiMemAutoInjectChange: (enabled: boolean) => void;
+	onPiMemPrivacyChange: (mode: "off" | "mask" | "strict") => void;
+	onPiMemStorageBackendChange: (backend: "jsonl" | "sqlite" | "auto") => void;
+	onPiMemExtractionModeChange: (mode: "heuristic" | "model") => void;
 	onCancel: () => void;
 }
 
@@ -293,6 +305,48 @@ export class SettingsSelectorComponent extends Container {
 						},
 						() => done(),
 					),
+			},
+			{
+				id: "pi-mem-enabled",
+				label: "Pi Mem",
+				description: "Enable persistent project memory",
+				currentValue: config.piMemEnabled ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
+				id: "pi-mem-auto-extract",
+				label: "Pi Mem auto-extract",
+				description: "Auto-save memory candidates from messages and tool results",
+				currentValue: config.piMemAutoExtract ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
+				id: "pi-mem-auto-inject",
+				label: "Pi Mem auto-inject",
+				description: "Inject matching memories into prompts",
+				currentValue: config.piMemAutoInject ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
+				id: "pi-mem-privacy",
+				label: "Pi Mem privacy",
+				description: "Memory redaction mode",
+				currentValue: config.piMemPrivacy,
+				values: ["off", "mask", "strict"],
+			},
+			{
+				id: "pi-mem-storage-backend",
+				label: "Pi Mem backend",
+				description: "Storage backend preference (auto currently falls back to JSONL)",
+				currentValue: config.piMemStorageBackend,
+				values: ["auto", "sqlite", "jsonl"],
+			},
+			{
+				id: "pi-mem-extraction-mode",
+				label: "Pi Mem extraction mode",
+				description: "Memory extraction strategy (model mode scaffold)",
+				currentValue: config.piMemExtractionMode,
+				values: ["heuristic", "model"],
 			},
 			{
 				id: "thinking",
@@ -515,6 +569,24 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "terminal-progress":
 						callbacks.onShowTerminalProgressChange(newValue === "true");
+						break;
+					case "pi-mem-enabled":
+						callbacks.onPiMemEnabledChange(newValue === "true");
+						break;
+					case "pi-mem-auto-extract":
+						callbacks.onPiMemAutoExtractChange(newValue === "true");
+						break;
+					case "pi-mem-auto-inject":
+						callbacks.onPiMemAutoInjectChange(newValue === "true");
+						break;
+					case "pi-mem-privacy":
+						callbacks.onPiMemPrivacyChange(newValue as "off" | "mask" | "strict");
+						break;
+					case "pi-mem-storage-backend":
+						callbacks.onPiMemStorageBackendChange(newValue as "jsonl" | "sqlite" | "auto");
+						break;
+					case "pi-mem-extraction-mode":
+						callbacks.onPiMemExtractionModeChange(newValue as "heuristic" | "model");
 						break;
 				}
 			},

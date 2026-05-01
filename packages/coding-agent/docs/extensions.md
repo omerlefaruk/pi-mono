@@ -2552,6 +2552,7 @@ All examples in [examples/extensions/](../examples/extensions/).
 | **Compaction & Sessions** |||
 | `custom-compaction.ts` | Custom compaction summary | `on("session_before_compact")` |
 | `trigger-compact.ts` | Trigger compaction manually | `compact()` |
+| `halo/` | HALO-compatible local trace capture and trace analysis tools | agent/tool lifecycle events, `registerTool`, `registerCommand` |
 | `git-checkpoint.ts` | Git stash on turns | `on("turn_start")`, `on("session_before_fork")`, `exec` |
 | `auto-commit-on-exit.ts` | Commit on shutdown | `on("session_shutdown")`, `exec` |
 | **UI Components** |||

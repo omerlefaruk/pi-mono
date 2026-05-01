@@ -17,6 +17,18 @@ function toPosixPath(value: string): string {
 	return value.split(path.sep).join("/");
 }
 
+function uniquePaths(paths: string[]): string[] {
+	const seen = new Set<string>();
+	const unique: string[] = [];
+	for (const value of paths) {
+		const normalized = value.replace(/\\/g, "/").replace(/^\.\//, "");
+		if (seen.has(normalized)) continue;
+		seen.add(normalized);
+		unique.push(normalized);
+	}
+	return unique;
+}
+
 const findSchema = Type.Object({
 	pattern: Type.String({
 		description: "Glob pattern to match files, e.g. '*.ts', '**/*.json', or 'src/**/*.spec.ts'",
@@ -119,6 +131,10 @@ export function createFindToolDefinition(
 		label: "find",
 		description: `Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} results or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
 		promptSnippet: "Find files by glob pattern (respects .gitignore)",
+		promptGuidelines: [
+			"Use one glob per subtree and refine from results instead of repeating broad find calls.",
+			"Prefer find over bash find/fd for file discovery.",
+		],
 		parameters: findSchema,
 		async execute(
 			_toolCallId,
@@ -183,11 +199,13 @@ export function createFindToolDefinition(
 							}
 
 							// Relativize paths against the search root for stable output.
-							const relativized = results.map((p) => {
-								if (p.startsWith(searchPath)) return toPosixPath(p.slice(searchPath.length + 1));
-								return toPosixPath(path.relative(searchPath, p));
-							});
-							const resultLimitReached = relativized.length >= effectiveLimit;
+							const relativized = uniquePaths(
+								results.map((p) => {
+									if (p.startsWith(searchPath)) return toPosixPath(p.slice(searchPath.length + 1));
+									return toPosixPath(path.relative(searchPath, p));
+								}),
+							);
+							const resultLimitReached = results.length >= effectiveLimit;
 							const rawOutput = relativized.join("\n");
 							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
 							let resultOutput = truncation.content;
@@ -315,8 +333,9 @@ export function createFindToolDefinition(
 								relativized.push(toPosixPath(relativePath));
 							}
 
-							const resultLimitReached = relativized.length >= effectiveLimit;
-							const rawOutput = relativized.join("\n");
+							const deduped = uniquePaths(relativized);
+							const resultLimitReached = lines.length >= effectiveLimit;
+							const rawOutput = deduped.join("\n");
 							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
 							let resultOutput = truncation.content;
 							const details: FindToolDetails = {};

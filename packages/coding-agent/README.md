@@ -169,7 +169,7 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/login`, `/logout` | OAuth authentication |
 | `/model` | Switch models |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
-| `/settings` | Thinking level, theme, message delivery, transport |
+| `/settings` | Thinking level, theme, message delivery, transport, and Pi Mem controls (including backend/extraction mode) |
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
 | `/name <name>` | Set session display name |
@@ -183,8 +183,15 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/share` | Upload as private GitHub gist with shareable HTML link |
 | `/reload` | Reload keybindings, extensions, skills, prompts, and context files (themes hot-reload automatically) |
 | `/hotkeys` | Show all keyboard shortcuts |
+| `/mem [status|on|off|namespace list|namespace set <name>|namespace clear|maintenance compact|purge [--global --yes --include-pinned --include-wrong]|view <id>|timeline [--json]]` | Manage Pi Mem behavior, scope, maintenance, and purge/viewer flows |
+| `/mem-search <query>` | Search Pi Mem memories |
+| `/remember <text>` | Save a memory explicitly |
+| `/forget <id>` | Delete a memory by id |
+| `/pin <id>`, `/stale <id>`, `/wrong <id>`, `/useful <id>` | Memory feedback controls |
 | `/changelog` | Display version history |
 | `/quit` | Quit pi |
+
+Pi Mem also exposes tools for agent/runtime use: `pi_mem_search`, `pi_mem_get`, `pi_mem_remember`, `pi_mem_forget`, `pi_mem_timeline`, `pi_mem_feedback`, `pi_mem_stats`, `pi_mem_maintenance`.
 
 ### Keyboard Shortcuts
 

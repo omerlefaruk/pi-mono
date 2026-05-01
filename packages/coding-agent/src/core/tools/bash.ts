@@ -149,6 +149,14 @@ function resolveSpawnContext(command: string, cwd: string, spawnHook?: BashSpawn
 	return spawnHook ? spawnHook(baseContext) : baseContext;
 }
 
+function looksLikeBarePathCommand(command: string): boolean {
+	const trimmed = command.trim();
+	const quoted = trimmed.match(/^["']([^"']+)["']$/)?.[1];
+	const candidate = quoted ?? trimmed;
+	if (!quoted && /\s/.test(candidate)) return false;
+	return /^(?:[A-Za-z]:[\\/]|\/|~\/|\.\.?[\\/])/.test(candidate);
+}
+
 export interface BashToolOptions {
 	/** Custom operations for command execution. Default: local shell */
 	operations?: BashOperations;
@@ -282,6 +290,10 @@ export function createBashToolDefinition(
 		label: "bash",
 		description: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
 		promptSnippet: "Execute bash commands (ls, grep, find, etc.)",
+		promptGuidelines: [
+			"Use bash for commands and scripts, but prefer read/grep/find/ls for file exploration.",
+			"Do not execute a bare path with bash; inspect it with read/ls or ask for confirmation first.",
+		],
 		parameters: bashSchema,
 		async execute(
 			_toolCallId,
@@ -290,6 +302,11 @@ export function createBashToolDefinition(
 			onUpdate?,
 			_ctx?,
 		) {
+			if (looksLikeBarePathCommand(command)) {
+				throw new Error(
+					"Refusing to execute a bare path. Inspect the path with read/ls first, or run an explicit command with arguments if execution is intended.",
+				);
+			}
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
 			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook);
 			if (onUpdate) {

@@ -119,6 +119,20 @@ function formatGrepResult(
 	return text;
 }
 
+function mergeLineIntervals(intervals: Array<{ start: number; end: number }>): Array<{ start: number; end: number }> {
+	const sorted = intervals.filter((interval) => interval.end >= interval.start).sort((a, b) => a.start - b.start);
+	const merged: Array<{ start: number; end: number }> = [];
+	for (const interval of sorted) {
+		const previous = merged[merged.length - 1];
+		if (previous && interval.start <= previous.end + 1) {
+			previous.end = Math.max(previous.end, interval.end);
+		} else {
+			merged.push({ ...interval });
+		}
+	}
+	return merged;
+}
+
 export function createGrepToolDefinition(
 	cwd: string,
 	options?: GrepToolOptions,
@@ -129,6 +143,10 @@ export function createGrepToolDefinition(
 		label: "grep",
 		description: `Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} matches or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Long lines are truncated to ${GREP_MAX_LINE_LENGTH} chars.`,
 		promptSnippet: "Search file contents for patterns (respects .gitignore)",
+		promptGuidelines: [
+			"Use one broad grep to shortlist files, then read targeted files instead of repeating similar searches.",
+			"Prefer grep over bash rg/cat for codebase exploration.",
+		],
 		parameters: grepSchema,
 		async execute(
 			_toolCallId,
@@ -246,26 +264,6 @@ export function createGrepToolDefinition(
 							stderr += chunk.toString();
 						});
 
-						const formatBlock = async (filePath: string, lineNumber: number): Promise<string[]> => {
-							const relativePath = formatPath(filePath);
-							const lines = await getFileLines(filePath);
-							if (!lines.length) return [`${relativePath}:${lineNumber}: (unable to read file)`];
-							const block: string[] = [];
-							const start = contextValue > 0 ? Math.max(1, lineNumber - contextValue) : lineNumber;
-							const end = contextValue > 0 ? Math.min(lines.length, lineNumber + contextValue) : lineNumber;
-							for (let current = start; current <= end; current++) {
-								const lineText = lines[current - 1] ?? "";
-								const sanitized = lineText.replace(/\r/g, "");
-								const isMatchLine = current === lineNumber;
-								// Truncate long lines so grep output stays compact.
-								const { text: truncatedText, wasTruncated } = truncateLine(sanitized);
-								if (wasTruncated) linesTruncated = true;
-								if (isMatchLine) block.push(`${relativePath}:${current}: ${truncatedText}`);
-								else block.push(`${relativePath}-${current}- ${truncatedText}`);
-							}
-							return block;
-						};
-
 						// Collect matches during streaming, then format them after rg exits.
 						const matches: Array<{ filePath: string; lineNumber: number; lineText?: string }> = [];
 						rl.on("line", (line) => {
@@ -313,19 +311,45 @@ export function createGrepToolDefinition(
 							}
 
 							// Format matches after streaming finishes so custom readFile() backends can be async.
-							for (const match of matches) {
-								if (contextValue === 0 && match.lineText !== undefined) {
+							if (contextValue === 0) {
+								for (const match of matches) {
 									const relativePath = formatPath(match.filePath);
-									const sanitized = match.lineText
+									const sanitized = (match.lineText ?? "")
 										.replace(/\r\n/g, "\n")
 										.replace(/\r/g, "")
 										.replace(/\n$/, "");
 									const { text: truncatedText, wasTruncated } = truncateLine(sanitized);
 									if (wasTruncated) linesTruncated = true;
 									outputLines.push(`${relativePath}:${match.lineNumber}: ${truncatedText}`);
-								} else {
-									const block = await formatBlock(match.filePath, match.lineNumber);
-									outputLines.push(...block);
+								}
+							} else {
+								const byFile = new Map<string, number[]>();
+								for (const match of matches) {
+									const lines = byFile.get(match.filePath) ?? [];
+									lines.push(match.lineNumber);
+									byFile.set(match.filePath, lines);
+								}
+								for (const [filePath, lineNumbers] of byFile) {
+									const fileLines = await getFileLines(filePath);
+									const relativePath = formatPath(filePath);
+									const matchLines = new Set(lineNumbers);
+									const intervals = mergeLineIntervals(
+										lineNumbers.map((lineNumber) => ({
+											start: Math.max(1, lineNumber - contextValue),
+											end: Math.min(fileLines.length, lineNumber + contextValue),
+										})),
+									);
+									for (const interval of intervals) {
+										for (let current = interval.start; current <= interval.end; current++) {
+											const lineText = fileLines[current - 1] ?? "";
+											const { text: truncatedText, wasTruncated } = truncateLine(
+												lineText.replace(/\r/g, ""),
+											);
+											if (wasTruncated) linesTruncated = true;
+											const separator = matchLines.has(current) ? ":" : "-";
+											outputLines.push(`${relativePath}${separator}${current}${separator} ${truncatedText}`);
+										}
+									}
 								}
 							}
 

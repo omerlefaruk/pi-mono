@@ -159,6 +159,27 @@ When a provider requests a retry delay longer than `retry.provider.maxRetryDelay
 
 Normally the package manager's global modules location is queried using `root -g`. As a special case, if the first element of `npmCommand` is `"bun"`, the modules location will instead be queried with `pm bin -g`.
 
+### Pi Mem
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `piMem.enabled` | boolean | `true` | Enable persistent Pi Mem memory features |
+| `piMem.autoExtract` | boolean | `true` | Auto-save memory candidates from assistant/tool output |
+| `piMem.autoInject` | boolean | `true` | Inject relevant memories into prompts |
+| `piMem.maxInjected` | number | `8` | Maximum auto-injected memories per prompt |
+| `piMem.maxQueryResults` | number | `20` | Maximum results returned by Pi Mem search |
+| `piMem.redactMode` | string | `"mask"` | Redaction mode: `"off"`, `"mask"`, `"strict"` |
+| `piMem.namespaces` | string[] | `[]` | Optional namespace partitions (first value is active namespace) |
+| `piMem.storePath` | string | - | Override memory store path |
+| `piMem.storageBackend` | string | `"jsonl"` | Backend preference: `"jsonl"`, `"sqlite"`, or `"auto"` (currently JSONL fallback for `auto`/sqlite maintenance) |
+| `piMem.projectId` | string | auto | Project scope id for cross-project filtering (defaults to derived cwd name or env override) |
+| `piMem.extractionMode` | string | `"heuristic"` | Extraction strategy: `"heuristic"` (active) or `"model"` (scaffold) |
+| `piMem.extractionModel` | string | - | Optional model id scaffold for model-based extraction |
+
+Global purge safeguards: `/mem purge --global` requires confirmation in interactive mode, and requires `--yes` in headless mode.
+
+Pi Mem tools exposed to models/extensions include `pi_mem_search`, `pi_mem_get`, `pi_mem_remember`, `pi_mem_forget`, `pi_mem_timeline`, `pi_mem_feedback`, `pi_mem_stats`, and `pi_mem_maintenance`.
+
 ### Sessions
 
 | Setting | Type | Default | Description |

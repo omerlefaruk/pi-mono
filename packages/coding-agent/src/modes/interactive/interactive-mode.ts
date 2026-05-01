@@ -3722,6 +3722,7 @@ export class InteractiveMode {
 
 	private showSettingsSelector(): void {
 		this.showSelector((done) => {
+			const piMemSettings = this.settingsManager.getPiMemSettings();
 			const selector = new SettingsSelectorComponent(
 				{
 					autoCompact: this.session.autoCompactionEnabled,
@@ -3749,6 +3750,12 @@ export class InteractiveMode {
 					clearOnShrink: this.settingsManager.getClearOnShrink(),
 					showTerminalProgress: this.settingsManager.getShowTerminalProgress(),
 					warnings: this.settingsManager.getWarnings(),
+					piMemEnabled: piMemSettings.enabled ?? true,
+					piMemAutoExtract: piMemSettings.autoExtract ?? true,
+					piMemAutoInject: piMemSettings.autoInject ?? true,
+					piMemPrivacy: piMemSettings.redactMode ?? "mask",
+					piMemStorageBackend: piMemSettings.storageBackend ?? "jsonl",
+					piMemExtractionMode: piMemSettings.extractionMode ?? "heuristic",
 				},
 				{
 					onAutoCompactChange: (enabled) => {
@@ -3864,6 +3871,39 @@ export class InteractiveMode {
 					},
 					onWarningsChange: (warnings) => {
 						this.settingsManager.setWarnings(warnings);
+					},
+					onPiMemEnabledChange: (enabled) => {
+						this.settingsManager.setPiMemSettings({ ...this.settingsManager.getPiMemSettings(), enabled });
+					},
+					onPiMemAutoExtractChange: (enabled) => {
+						this.settingsManager.setPiMemSettings({
+							...this.settingsManager.getPiMemSettings(),
+							autoExtract: enabled,
+						});
+					},
+					onPiMemAutoInjectChange: (enabled) => {
+						this.settingsManager.setPiMemSettings({
+							...this.settingsManager.getPiMemSettings(),
+							autoInject: enabled,
+						});
+					},
+					onPiMemPrivacyChange: (mode) => {
+						this.settingsManager.setPiMemSettings({
+							...this.settingsManager.getPiMemSettings(),
+							redactMode: mode,
+						});
+					},
+					onPiMemStorageBackendChange: (backend) => {
+						this.settingsManager.setPiMemSettings({
+							...this.settingsManager.getPiMemSettings(),
+							storageBackend: backend,
+						});
+					},
+					onPiMemExtractionModeChange: (mode) => {
+						this.settingsManager.setPiMemSettings({
+							...this.settingsManager.getPiMemSettings(),
+							extractionMode: mode,
+						});
 					},
 					onCancel: () => {
 						done();

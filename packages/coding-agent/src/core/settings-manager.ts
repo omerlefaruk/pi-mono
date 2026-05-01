@@ -57,6 +57,21 @@ export interface WarningSettings {
 	anthropicExtraUsage?: boolean; // default: true
 }
 
+export interface PiMemSettings {
+	enabled?: boolean;
+	autoExtract?: boolean;
+	autoInject?: boolean;
+	maxInjected?: number;
+	maxQueryResults?: number;
+	redactMode?: "off" | "mask" | "strict";
+	namespaces?: string[];
+	storePath?: string;
+	storageBackend?: "jsonl" | "sqlite" | "auto";
+	projectId?: string;
+	extractionMode?: "heuristic" | "model";
+	extractionModel?: string;
+}
+
 export type TransportSetting = Transport;
 
 /**
@@ -110,6 +125,7 @@ export interface Settings {
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
 	markdown?: MarkdownSettings;
 	warnings?: WarningSettings;
+	piMem?: PiMemSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
 }
 
@@ -1073,6 +1089,16 @@ export class SettingsManager {
 	setWarnings(warnings: WarningSettings): void {
 		this.globalSettings.warnings = { ...warnings };
 		this.markModified("warnings");
+		this.save();
+	}
+
+	getPiMemSettings(): PiMemSettings {
+		return { ...(this.settings.piMem ?? {}) };
+	}
+
+	setPiMemSettings(settings: PiMemSettings): void {
+		this.globalSettings.piMem = { ...settings };
+		this.markModified("piMem");
 		this.save();
 	}
 }

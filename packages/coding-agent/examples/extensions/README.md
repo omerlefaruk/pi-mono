@@ -91,6 +91,7 @@ cp permission-gate.ts ~/.pi/agent/extensions/
 | `claude-rules.ts` | Scans `.claude/rules/` folder and lists rules in system prompt |
 | `custom-compaction.ts` | Custom compaction that summarizes entire conversation |
 | `trigger-compact.ts` | Triggers compaction when context usage exceeds 100k tokens and adds `/trigger-compact` command |
+| `halo/` | Records HALO-compatible pi traces and adds halo_* trace analysis tools plus `/halo-analyze` |
 
 ### System Integration
 

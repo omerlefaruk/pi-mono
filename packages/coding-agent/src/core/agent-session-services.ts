@@ -4,7 +4,9 @@ import type { Model } from "@mariozechner/pi-ai";
 import { getAgentDir } from "../config.js";
 import { AuthStorage } from "./auth-storage.js";
 import type { SessionStartEvent, ToolDefinition } from "./extensions/index.js";
+import { createHaloExtension } from "./halo/index.js";
 import { ModelRegistry } from "./model-registry.js";
+import { createPiMemExtension } from "./pi-mem/index.js";
 import { DefaultResourceLoader, type DefaultResourceLoaderOptions, type ResourceLoader } from "./resource-loader.js";
 import { type CreateAgentSessionOptions, type CreateAgentSessionResult, createAgentSession } from "./sdk.js";
 import type { SessionManager } from "./session-manager.js";
@@ -134,8 +136,29 @@ export async function createAgentSessionServices(
 	const authStorage = options.authStorage ?? AuthStorage.create(join(agentDir, "auth.json"));
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
 	const modelRegistry = options.modelRegistry ?? ModelRegistry.create(authStorage, join(agentDir, "models.json"));
+	const userExtensionFactories = options.resourceLoaderOptions?.extensionFactories ?? [];
+	const hasHaloFactory = userExtensionFactories.some((factory) => factory.name.toLowerCase().includes("halo"));
+	const hasPiMemFactory = userExtensionFactories.some((factory) => {
+		const name = factory.name.toLowerCase();
+		return name.includes("pimem") || name.includes("pi_mem") || name.includes("pi-mem");
+	});
+	const coreExtensionFactories = [
+		...(hasHaloFactory ? [] : [createHaloExtension()]),
+		...(hasPiMemFactory
+			? []
+			: [
+					createPiMemExtension({
+						cwd,
+						agentDir,
+						settings: settingsManager.getPiMemSettings(),
+						updateSettings: (settings) => settingsManager.setPiMemSettings(settings),
+					}),
+				]),
+	];
+	const extensionFactories = [...coreExtensionFactories, ...userExtensionFactories];
 	const resourceLoader = new DefaultResourceLoader({
 		...(options.resourceLoaderOptions ?? {}),
+		extensionFactories,
 		cwd,
 		agentDir,
 		settingsManager,

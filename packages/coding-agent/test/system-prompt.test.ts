@@ -75,6 +75,18 @@ describe("buildSystemPrompt", () => {
 	});
 
 	describe("prompt guidelines", () => {
+		test("includes batching and git-root context hints", () => {
+			const prompt = buildSystemPrompt({
+				selectedTools: ["read", "grep", "find", "ls", "bash"],
+				gitRoot: "C:/repo",
+				contextFiles: [],
+				skills: [],
+			});
+
+			expect(prompt).toContain("Batch file exploration");
+			expect(prompt).toContain("Current git repository root: C:/repo");
+		});
+
 		test("appends promptGuidelines to default guidelines", () => {
 			const prompt = buildSystemPrompt({
 				selectedTools: ["read", "dynamic_tool"],

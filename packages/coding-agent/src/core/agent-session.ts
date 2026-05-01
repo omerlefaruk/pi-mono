@@ -14,7 +14,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type {
 	Agent,
 	AgentEvent,
@@ -942,6 +942,7 @@ export class AgentSession {
 
 		this._baseSystemPromptOptions = {
 			cwd: this._cwd,
+			gitRoot: findGitRoot(this._cwd),
 			skills: loadedSkills,
 			contextFiles: loadedContextFiles,
 			customPrompt: loaderSystemPrompt,
@@ -972,10 +973,12 @@ export class AgentSession {
 		let messages: AgentMessage[] | undefined;
 
 		try {
+			const commandText = expandPromptTemplates ? this._normalizePathConvertedSlashCommand(text) : text;
+
 			// Handle extension commands first (execute immediately, even during streaming)
 			// Extension commands manage their own LLM interaction via pi.sendMessage()
-			if (expandPromptTemplates && text.startsWith("/")) {
-				const handled = await this._tryExecuteExtensionCommand(text);
+			if (expandPromptTemplates && commandText.startsWith("/")) {
+				const handled = await this._tryExecuteExtensionCommand(commandText);
 				if (handled) {
 					// Extension command executed, no prompt to send
 					preflightResult?.(true);
@@ -984,7 +987,7 @@ export class AgentSession {
 			}
 
 			// Emit input event for extension interception (before skill/template expansion)
-			let currentText = text;
+			let currentText = commandText;
 			let currentImages = options?.images;
 			if (this._extensionRunner.hasHandlers("input")) {
 				const inputResult = await this._extensionRunner.emitInput(
@@ -1110,6 +1113,21 @@ export class AgentSession {
 		preflightResult?.(true);
 		await this.agent.prompt(messages);
 		await this.waitForRetry();
+	}
+
+	/**
+	 * Git Bash/MSYS can rewrite slash-command CLI args like /halo-status into
+	 * C:/Program Files/Git/halo-status before pi sees them. Convert that shape
+	 * back only when it names a registered extension command.
+	 */
+	private _normalizePathConvertedSlashCommand(text: string): string {
+		if (!this._extensionRunner) return text;
+		const match = text.match(/^C:[\\/]Program Files[\\/]Git[\\/]([A-Za-z0-9][A-Za-z0-9_-]*)(?:\s+([\s\S]*))?$/);
+		if (!match) return text;
+		const commandName = match[1];
+		if (!commandName || !this._extensionRunner.getCommand(commandName)) return text;
+		const args = match[2];
+		return args ? `/${commandName} ${args}` : `/${commandName}`;
 	}
 
 	/**
@@ -3155,5 +3173,15 @@ export class AgentSession {
 	 */
 	get extensionRunner(): ExtensionRunner {
 		return this._extensionRunner;
+	}
+}
+
+function findGitRoot(startDir: string): string | undefined {
+	let current = resolve(startDir);
+	while (true) {
+		if (existsSync(join(current, ".git"))) return current;
+		const parent = dirname(current);
+		if (parent === current) return undefined;
+		current = parent;
 	}
 }

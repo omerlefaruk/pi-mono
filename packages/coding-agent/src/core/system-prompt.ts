@@ -16,8 +16,10 @@ export interface BuildSystemPromptOptions {
 	promptGuidelines?: string[];
 	/** Text to append to system prompt. */
 	appendSystemPrompt?: string;
-	/** Working directory. */
-	cwd: string;
+	/** Working directory. Default: process.cwd() */
+	cwd?: string;
+	/** Git repository root, when known. */
+	gitRoot?: string;
 	/** Pre-loaded context files. */
 	contextFiles?: Array<{ path: string; content: string }>;
 	/** Pre-loaded skills. */
@@ -33,11 +35,13 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		promptGuidelines,
 		appendSystemPrompt,
 		cwd,
+		gitRoot,
 		contextFiles: providedContextFiles,
 		skills: providedSkills,
 	} = options;
-	const resolvedCwd = cwd;
-	const promptCwd = resolvedCwd.replace(/\\/g, "/");
+	const resolvedCwd = cwd ?? process.cwd();
+	const promptCwd = resolvedCwd;
+	const promptGitRoot = gitRoot;
 
 	const now = new Date();
 	const year = now.getFullYear();
@@ -75,6 +79,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 		// Add date and working directory last
 		prompt += `\nCurrent date: ${date}`;
 		prompt += `\nCurrent working directory: ${promptCwd}`;
+		if (promptGitRoot) prompt += `\nCurrent git repository root: ${promptGitRoot}`;
 
 		return prompt;
 	}
@@ -114,6 +119,11 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	} else if (hasBash && (hasGrep || hasFind || hasLs)) {
 		addGuideline("Prefer grep/find/ls tools over bash for file exploration (faster, respects .gitignore)");
 	}
+	if (hasRead || hasGrep || hasFind || hasLs) {
+		addGuideline(
+			"Batch file exploration: use one broad find/grep, then read targeted files with offset/limit rather than repeating similar tool calls.",
+		);
+	}
 
 	for (const guideline of promptGuidelines ?? []) {
 		const normalized = guideline.trim();
@@ -123,6 +133,12 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	}
 
 	// Always include these
+	addGuideline(
+		"If the user provides only a path, inspect existence/type before executing it; do not run a path unless the user explicitly asks.",
+	);
+	addGuideline(
+		"Before running an unknown command or executable, prefer command -v/where.exe or a file existence check.",
+	);
 	addGuideline("Be concise in your responses");
 	addGuideline("Show file paths clearly when working with files");
 
@@ -167,6 +183,7 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 	// Add date and working directory last
 	prompt += `\nCurrent date: ${date}`;
 	prompt += `\nCurrent working directory: ${promptCwd}`;
+	if (promptGitRoot) prompt += `\nCurrent git repository root: ${promptGitRoot}`;
 
 	return prompt;
 }

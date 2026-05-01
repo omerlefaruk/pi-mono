@@ -19,6 +19,14 @@
 		"./hooks": {
 			"types": "./dist/core/hooks/index.d.ts",
 			"import": "./dist/core/hooks/index.js"
+		},
+		"./core/halo": {
+			"types": "./dist/core/halo/index.d.ts",
+			"import": "./dist/core/halo/index.js"
+		},
+		"./core/pi-mem": {
+			"types": "./dist/core/pi-mem/index.d.ts",
+			"import": "./dist/core/pi-mem/index.js"
 		}
 	},
 	"files": [
