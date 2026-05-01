@@ -1111,6 +1111,13 @@ export class AgentSession {
 			return;
 		}
 
+		try {
+			await this._runPreflightCompactionIfNeeded(messages);
+		} catch (error) {
+			preflightResult?.(false);
+			throw error;
+		}
+
 		preflightResult?.(true);
 		await this.agent.prompt(messages);
 		await this.waitForRetry();
@@ -1140,6 +1147,26 @@ export class AgentSession {
 			"First inspect whether it exists and what type it is using safe file/directory inspection tools.",
 			"If it is a file, read or summarize it. If it is a directory, list or inspect it. Ask for confirmation before running anything from it.",
 		].join("\n");
+	}
+
+	private async _runPreflightCompactionIfNeeded(pendingMessages: AgentMessage[]): Promise<void> {
+		const settings = this.settingsManager.getCompactionSettings();
+		const contextWindow = this.model?.contextWindow ?? 0;
+		if (!settings.enabled || contextWindow <= 0) return;
+
+		const projectedMessages = [...this.agent.state.messages, ...pendingMessages];
+		const before = estimateContextTokens(projectedMessages).tokens;
+		if (!shouldCompact(before, contextWindow, settings)) return;
+
+		await this._runAutoCompaction("threshold", false, { resumeAfter: false });
+
+		const after = estimateContextTokens([...this.agent.state.messages, ...pendingMessages]).tokens;
+		if (shouldCompact(after, contextWindow, settings)) {
+			const safeLimit = settings.maxContextTokens ?? Math.max(0, contextWindow - settings.reserveTokens);
+			throw new Error(
+				`Projected prompt context is ${after.toLocaleString()} tokens, above the safe limit of ${safeLimit.toLocaleString()} for ${this.model?.id ?? "the current model"}. Auto-compaction could not reduce it enough. Reduce the prompt/tool output, run /compact with stricter instructions, or switch to a larger-context model.`,
+			);
+		}
 	}
 
 	/**
@@ -1923,8 +1950,13 @@ export class AgentSession {
 	/**
 	 * Internal: Run auto-compaction with events.
 	 */
-	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<void> {
+	private async _runAutoCompaction(
+		reason: "overflow" | "threshold",
+		willRetry: boolean,
+		options: { resumeAfter?: boolean } = {},
+	): Promise<void> {
 		const settings = this.settingsManager.getCompactionSettings();
+		const resumeAfter = options.resumeAfter ?? true;
 
 		this._emit({ type: "compaction_start", reason });
 		this._autoCompactionAbortController = new AbortController();
@@ -2063,6 +2095,10 @@ export class AgentSession {
 				details,
 			};
 			this._emit({ type: "compaction_end", reason, result, aborted: false, willRetry });
+
+			if (!resumeAfter) {
+				return;
+			}
 
 			if (willRetry) {
 				const messages = this.agent.state.messages;
@@ -2451,7 +2487,19 @@ export class AgentSession {
 
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
-			: ["read", "bash", "edit", "write"];
+			: [
+					"read",
+					"bash",
+					"edit",
+					"write",
+					"symbol_overview",
+					"read_symbol",
+					"replace_symbol_body",
+					"insert_before_symbol",
+					"insert_after_symbol",
+					"rename_symbol",
+					"safe_delete_symbol",
+				];
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		this._refreshToolRegistry({
 			activeToolNames: baseActiveToolNames,
@@ -3193,7 +3241,10 @@ export function extractBarePathInput(text: string, cwd = process.cwd()): string 
 	if (!trimmed || /[\n\r;&|<>`$]/.test(trimmed)) return undefined;
 	const unquoted = stripBalancedQuotes(trimmed);
 	if (!unquoted || /[\n\r;&|<>`$]/.test(unquoted)) return undefined;
-	if (looksLikeExistingPath(unquoted, cwd) || looksLikeStandalonePath(unquoted)) return unquoted;
+	if (looksLikeExistingPath(unquoted, cwd)) return unquoted;
+	if (containsLikelyUrl(unquoted)) return undefined;
+	if (/\s/.test(unquoted)) return undefined;
+	if (looksLikeStandalonePath(unquoted)) return unquoted;
 	return undefined;
 }
 
@@ -3213,6 +3264,15 @@ function looksLikeExistingPath(text: string, cwd: string): boolean {
 	} catch {
 		return false;
 	}
+}
+
+function containsLikelyUrl(text: string): boolean {
+	return (
+		/(?:^|\s)(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|www\.)\S+/.test(text) ||
+		/(?:^|\s)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+(?:[/?#]\S*)/.test(
+			text,
+		)
+	);
 }
 
 function looksLikeStandalonePath(text: string): boolean {

@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { createWriteStream, existsSync } from "node:fs";
+import { createWriteStream, existsSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Container, Text, truncateToWidth } from "@mariozechner/pi-tui";
 import { spawn } from "child_process";
@@ -149,12 +149,24 @@ function resolveSpawnContext(command: string, cwd: string, spawnHook?: BashSpawn
 	return spawnHook ? spawnHook(baseContext) : baseContext;
 }
 
-function looksLikeBarePathCommand(command: string): boolean {
+function getBarePathCommandCandidate(command: string): string | undefined {
 	const trimmed = command.trim();
 	const quoted = trimmed.match(/^["']([^"']+)["']$/)?.[1];
 	const candidate = quoted ?? trimmed;
-	if (!quoted && /\s/.test(candidate)) return false;
-	return /^(?:[A-Za-z]:[\\/]|\/|~\/|\.\.?[\\/])/.test(candidate);
+	if (!quoted && /\s/.test(candidate)) return undefined;
+	return /^(?:[A-Za-z]:[\\/]|\/|~\/|\.\.?[\\/])/.test(candidate) ? candidate : undefined;
+}
+
+function isExplicitRelativeExecutable(candidate: string, cwd: string): boolean {
+	if (!/^\.\.?[\\/]/.test(candidate)) return false;
+	try {
+		const stats = statSync(resolve(cwd, candidate));
+		if (!stats.isFile()) return false;
+		if (process.platform === "win32") return /\.(?:sh|bash|cmd|bat|ps1|exe)$/i.test(candidate);
+		return (stats.mode & 0o111) !== 0;
+	} catch {
+		return false;
+	}
 }
 
 function msysSlashCommandName(command: string): string | undefined {
@@ -169,25 +181,78 @@ const POWERSHELL_COMMAND_RE =
 const POWERSHELL_VARIABLE_RE = /(?:^|\s)\$[A-Za-z_][\w:]*\s*=|\$env:[A-Za-z_][\w]*/i;
 const VITEST_RE = /(?:^|[\s;&|])(?:npx\s+)?(?:vitest|vite-node\s+.*vitest|\.\/node_modules\/\.bin\/vitest)\b/i;
 
-function classifyBashCommand(command: string): string | undefined {
+function classifyBashCommand(command: string, cwd: string): string | undefined {
 	const convertedSlashCommand = msysSlashCommandName(command);
 	if (convertedSlashCommand) {
 		return `This looks like a slash command converted to a Git Bash path (${convertedSlashCommand}). Invoke slash commands from the pi input line, not through bash.`;
 	}
 	if (/^\s*(?:pwsh|powershell)(?:\.exe)?\s+-Command\b/i.test(command)) return undefined;
 	if (POWERSHELL_COMMAND_RE.test(command) || POWERSHELL_VARIABLE_RE.test(command)) {
-		return "This command looks like PowerShell syntax, but the bash tool runs a POSIX shell. Use POSIX shell syntax here, or explicitly run pwsh -Command if PowerShell is intended.";
+		return "This command looks like PowerShell syntax, but the bash tool runs a POSIX shell. Use POSIX shell syntax here (for example, ls/find/grep/sed), or explicitly run pwsh -Command if PowerShell is intended.";
 	}
-	if (looksLikeBarePathCommand(command)) {
+	const barePathCandidate = getBarePathCommandCandidate(command);
+	if (barePathCandidate && !isExplicitRelativeExecutable(barePathCandidate, cwd)) {
+		if (/^\.\.?[\\/]/.test(barePathCandidate)) {
+			return `Refusing to execute a bare relative path (${barePathCandidate}). If this is an executable script, run it explicitly with an interpreter such as bash ${barePathCandidate}. For autoresearch, prefer run_experiment.`;
+		}
 		return "Refusing to execute a bare path. Inspect the path with read/ls first, or run an explicit command with arguments if execution is intended.";
 	}
-	if (VITEST_RE.test(command) && /(?:^|\s)--runInBand(?:\s|$)/.test(command)) {
-		return "Vitest does not support Jest's --runInBand flag. Use a Vitest-supported profile such as --pool=forks --poolOptions.forks.singleFork=true, or omit the flag.";
-	}
+	const testCommandIssue = classifyTestCommand(command, cwd);
+	if (testCommandIssue) return testCommandIssue;
 	if (process.platform === "win32" && /(?:^|[\s;&|])ln\s+-s\b/.test(command)) {
 		return "This command creates a symlink on Windows. Check Developer Mode/admin symlink privileges first, or use a copy/junction fallback for portable tests.";
 	}
 	return undefined;
+}
+
+function classifyTestCommand(command: string, cwd: string): string | undefined {
+	if (VITEST_RE.test(command)) {
+		if (/(?:^|\s)--runInBand(?:\s|$)/.test(command)) {
+			return "Vitest does not support Jest's --runInBand flag. Use a Vitest-supported profile such as --pool=forks --poolOptions.forks.singleFork=true, or omit the flag.";
+		}
+		if ((command.match(/(?:^|\s)--run(?=\s|$)/g) ?? []).length > 1) {
+			return "Vitest --run was specified more than once. Remove the duplicate flag before running the test command.";
+		}
+	}
+
+	const npmScript = command.match(/^\s*npm\s+run\s+([^\s;&|]+)([\s\S]*)$/);
+	if (!npmScript) return undefined;
+	const packageJson = readNearestPackageJson(cwd);
+	if (!packageJson) {
+		return "npm run was requested outside a package directory. Change to the package/workspace root that contains package.json, or use npm --prefix <dir> run <script>.";
+	}
+	const scriptName = npmScript[1];
+	const script = packageJson.scripts?.[scriptName];
+	if (!script) {
+		return `package.json does not define script "${scriptName}" in ${packageJson.path}. Run npm run to list available scripts or change to the correct workspace.`;
+	}
+	const forwardedArgs = npmScript[2] ?? "";
+	if (
+		/\bvitest\b/.test(script) &&
+		/(?:^|\s)--run(?=\s|$)/.test(script) &&
+		/(?:^|\s)--\s+[\s\S]*--run(?=\s|$)/.test(forwardedArgs)
+	) {
+		return `The npm script "${scriptName}" already includes vitest --run; remove the forwarded duplicate --run flag.`;
+	}
+	return undefined;
+}
+
+function readNearestPackageJson(cwd: string): { path: string; scripts?: Record<string, string> } | undefined {
+	let dir = cwd;
+	for (;;) {
+		const path = join(dir, "package.json");
+		if (existsSync(path)) {
+			try {
+				const parsed = JSON.parse(readFileSync(path, "utf8")) as { scripts?: Record<string, string> };
+				return { path, scripts: parsed.scripts };
+			} catch {
+				return { path };
+			}
+		}
+		const parent = resolve(dir, "..");
+		if (parent === dir) return undefined;
+		dir = parent;
+	}
 }
 
 function normalizeCommandForLoopGuard(command: string): string {
@@ -216,16 +281,46 @@ function formatRepeatedFailureMessage(command: string, failure: FailedCommandSig
 	return [
 		"Repeated bash failure detected. The same command has already failed twice with a similar error, so pi will not run it again without a changed command or new diagnostic step.",
 		`Command: ${command}`,
-		`Last failure: ${failure.lastFailure || "(no output)"}`,
+		`Failure signature: ${failure.lastFailure || "(no output)"}`,
+		"Next action: inspect the failing script/config/module path, run a narrower diagnostic command, or change the command materially before retrying.",
 	].join("\n");
 }
 
-function isGitMutationCommand(command: string): boolean {
-	return /(?:^|[;&|]\s*)git\s+(?:commit|merge|cherry-pick|rebase)\b/.test(command);
+interface GitInvocation {
+	subcommand?: string;
+	cwd: string;
 }
 
-function gitMutationVerb(command: string): string | undefined {
-	return command.match(/(?:^|[;&|]\s*)git\s+(commit|merge|cherry-pick|rebase)\b/)?.[1];
+function parseGitInvocation(command: string, cwd: string): GitInvocation | undefined {
+	const match = command.match(/^\s*git\b\s*([^;&|]*)/);
+	if (!match) return undefined;
+	const tokens = [...(match[1] ?? "").matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map(
+		(token) => token[1] ?? token[2] ?? token[3] ?? "",
+	);
+	let gitCwd = cwd;
+	for (let i = 0; i < tokens.length; i++) {
+		const token = tokens[i];
+		if (token === "-C") {
+			const dir = tokens[++i];
+			if (dir) gitCwd = resolve(gitCwd, dir);
+			continue;
+		}
+		if (token.startsWith("-C") && token.length > 2) {
+			gitCwd = resolve(gitCwd, token.slice(2));
+			continue;
+		}
+		return { subcommand: token, cwd: gitCwd };
+	}
+	return { cwd: gitCwd };
+}
+
+function isGitMutationCommand(command: string, cwd: string): boolean {
+	return ["commit", "merge", "cherry-pick", "rebase"].includes(parseGitInvocation(command, cwd)?.subcommand ?? "");
+}
+
+function gitMutationVerb(command: string, cwd: string): string | undefined {
+	const subcommand = parseGitInvocation(command, cwd)?.subcommand;
+	return ["commit", "merge", "cherry-pick", "rebase"].includes(subcommand ?? "") ? subcommand : undefined;
 }
 
 function isGitMutationContinuation(command: string): boolean {
@@ -247,17 +342,47 @@ async function runPreflightProbe(
 	return { exitCode: result.exitCode, output: Buffer.concat(chunks).toString("utf-8").trim() };
 }
 
+function requiresGitWorkTree(
+	invocation: GitInvocation | undefined,
+): invocation is GitInvocation & { subcommand: string } {
+	const subcommand = invocation?.subcommand;
+	if (!subcommand) return false;
+	return !new Set(["--version", "version", "clone", "init", "config", "help", "lfs"]).has(subcommand);
+}
+
+async function runGitWorkTreePreflight(
+	command: string,
+	spawnContext: BashSpawnContext,
+	ops: BashOperations,
+): Promise<void> {
+	const invocation = parseGitInvocation(command, spawnContext.cwd);
+	if (!requiresGitWorkTree(invocation)) return;
+	const insideWorkTree = await runPreflightProbe(
+		ops,
+		"git rev-parse --is-inside-work-tree >/dev/null 2>&1",
+		invocation.cwd,
+		spawnContext.env,
+	);
+	if (insideWorkTree.exitCode !== 0) {
+		throw new Error(
+			`Git preflight failed: target directory is not inside a git worktree (${invocation.cwd}). Change to the repository root/subdirectory, or run git clone/init if you intended to create a repository.`,
+		);
+	}
+}
+
 async function runGitMutationPreflight(
 	command: string,
 	spawnContext: BashSpawnContext,
 	ops: BashOperations,
 ): Promise<void> {
-	if (!isGitMutationCommand(command)) return;
-	const verb = gitMutationVerb(command);
+	if (!isGitMutationCommand(command, spawnContext.cwd)) return;
+	const verb = gitMutationVerb(command, spawnContext.cwd);
+	const invocation = parseGitInvocation(command, spawnContext.cwd);
+	const gitCwd = invocation?.cwd ?? spawnContext.cwd;
 	const insideWorkTree = await runPreflightProbe(
 		ops,
 		"git rev-parse --is-inside-work-tree >/dev/null 2>&1",
-		spawnContext.cwd,
+		gitCwd,
 		spawnContext.env,
 	);
 	if (insideWorkTree.exitCode !== 0) return;
@@ -265,7 +390,7 @@ async function runGitMutationPreflight(
 	const operationState = await runPreflightProbe(
 		ops,
 		'state=$(for p in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD REBASE_HEAD; do f=$(git rev-parse --git-path "$p" 2>/dev/null); if [ -e "$f" ]; then echo "$p"; fi; done; for d in rebase-merge rebase-apply; do f=$(git rev-parse --git-path "$d" 2>/dev/null); if [ -d "$f" ]; then echo "$d"; fi; done); if [ -z "$state" ]; then exit 0; else echo "$state"; exit 1; fi',
-		spawnContext.cwd,
+		gitCwd,
 		spawnContext.env,
 	);
 	if (operationState.exitCode !== 0 && !isGitMutationContinuation(command)) {
@@ -278,7 +403,7 @@ async function runGitMutationPreflight(
 		const identity = await runPreflightProbe(
 			ops,
 			'test -n "$(git config --get user.name)" && test -n "$(git config --get user.email)"',
-			spawnContext.cwd,
+			gitCwd,
 			spawnContext.env,
 		);
 		if (identity.exitCode !== 0) {
@@ -290,7 +415,7 @@ async function runGitMutationPreflight(
 
 	if ((verb === "merge" || verb === "cherry-pick" || verb === "rebase") && !isGitMutationContinuation(command)) {
 		if (verb === "rebase" && /\s--autostash\b/.test(command)) return;
-		const status = await runPreflightProbe(ops, "git status --porcelain", spawnContext.cwd, spawnContext.env);
+		const status = await runPreflightProbe(ops, "git status --porcelain", gitCwd, spawnContext.env);
 		if (status.exitCode === 0 && status.output) {
 			throw new Error(
 				`Git mutation preflight failed: worktree has uncommitted changes. Commit or stash the specific files before running git ${verb}.`,
@@ -448,7 +573,7 @@ export function createBashToolDefinition(
 			onUpdate?,
 			_ctx?,
 		) {
-			const commandIssue = classifyBashCommand(command);
+			const commandIssue = classifyBashCommand(command, cwd);
 			if (commandIssue) throw new Error(commandIssue);
 
 			const loopGuardKey = normalizeCommandForLoopGuard(command);
@@ -459,7 +584,10 @@ export function createBashToolDefinition(
 
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
 			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook);
-			await runGitMutationPreflight(command, spawnContext, ops);
+			if (/^\s*git\b/.test(command)) {
+				await runGitWorkTreePreflight(command, spawnContext, ops);
+				await runGitMutationPreflight(command, spawnContext, ops);
+			}
 			if (onUpdate) {
 				onUpdate({ content: [], details: undefined });
 			}

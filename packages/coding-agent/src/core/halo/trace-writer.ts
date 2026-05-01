@@ -269,7 +269,10 @@ export function truncateUnknown(value: unknown, cap: number): unknown {
 export function summarizeHaloToolOutput(toolName: string, result: unknown): Record<string, unknown> | unknown {
 	if (!toolName.startsWith("halo_")) return truncateUnknown(result, 16_384);
 	const details =
-		result && typeof result === "object" ? (result as { details?: { result?: unknown } }).details : undefined;
+		result && typeof result === "object"
+			? (result as { details?: { result?: unknown; summary?: Record<string, unknown> } }).details
+			: undefined;
+	if (details?.summary) return details.summary;
 	const payload = details?.result;
 	if (!payload || typeof payload !== "object") {
 		return { haloTool: toolName, resultBytes: safeJson(result)?.length ?? 0 };

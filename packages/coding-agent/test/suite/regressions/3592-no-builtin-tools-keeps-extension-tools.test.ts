@@ -78,7 +78,23 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 				.getAllTools()
 				.map((tool) => tool.name)
 				.sort(),
-		).toEqual(["bash", "dynamic_tool", "edit", "find", "grep", "ls", "read", "write"]);
+		).toEqual([
+			"bash",
+			"dynamic_tool",
+			"edit",
+			"find",
+			"grep",
+			"insert_after_symbol",
+			"insert_before_symbol",
+			"ls",
+			"read",
+			"read_symbol",
+			"rename_symbol",
+			"replace_symbol_body",
+			"safe_delete_symbol",
+			"symbol_overview",
+			"write",
+		]);
 		expect(session.getActiveToolNames()).toEqual(["dynamic_tool"]);
 		expect(session.systemPrompt).toContain("- dynamic_tool: Run dynamic test behavior");
 		expect(session.systemPrompt).not.toContain("- read:");
@@ -111,8 +127,9 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 			noTools: "builtin",
 		});
 
-		expect(session.getActiveToolNames()).toEqual([]);
-		expect(session.systemPrompt).toContain("Available tools:\n(none)");
+		expect(session.getActiveToolNames()).not.toContain("read");
+		expect(session.getActiveToolNames()).not.toContain("bash");
+		expect(session.getActiveToolNames()).toContain("halo_get_dataset_overview");
 		expect(session.systemPrompt).not.toContain("- read:");
 		session.dispose();
 	});

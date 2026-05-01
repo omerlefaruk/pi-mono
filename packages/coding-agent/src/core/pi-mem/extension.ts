@@ -1,5 +1,6 @@
 import { basename, join } from "node:path";
 import { getAgentDir } from "../../config.js";
+import { estimateContextTokens } from "../compaction/index.js";
 import type { ExtensionAPI, ExtensionContext } from "../extensions/index.js";
 import { defaultHaloTracePath } from "../halo/extension.js";
 import { HaloTraceWriter } from "../halo/trace-writer.js";
@@ -43,6 +44,25 @@ interface HaloActiveContext extends PiMemCitation {
 	rootSpanId: string;
 	spanId: string;
 	kind: "agent" | "turn" | "tool";
+}
+
+const PI_MEM_MAX_INJECTED_TOKENS = 2048;
+const PI_MEM_MIN_CONTEXT_RESERVE_TOKENS = 4096;
+const PI_MEM_HIGH_CONTEXT_USAGE_PERCENT = 85;
+
+function estimateTextTokens(text: string): number {
+	return Math.ceil(text.length / 4);
+}
+
+function selectInjectedMemoriesWithinBudget(memories: PiMemRecord[], tokenBudget: number): PiMemRecord[] {
+	if (tokenBudget <= 0) return [];
+	const selected: PiMemRecord[] = [];
+	for (const memory of memories) {
+		const candidate = [...selected, memory];
+		if (estimateTextTokens(formatInjectedMemories(candidate)) > tokenBudget) continue;
+		selected.push(memory);
+	}
+	return selected;
 }
 
 export function createPiMemExtension(options: PiMemExtensionOptions) {
@@ -140,6 +160,26 @@ export function createPiMemExtension(options: PiMemExtensionOptions) {
 			lastCtx = ctx;
 			if (!pendingInjection) return;
 			pendingInjection = false;
+
+			const contextWindow = ctx.model?.contextWindow ?? 0;
+			let tokenBudget = PI_MEM_MAX_INJECTED_TOKENS;
+			if (contextWindow > 0) {
+				const estimate = estimateContextTokens(event.messages).tokens;
+				const contextPercent = (estimate / contextWindow) * 100;
+				if (contextPercent >= PI_MEM_HIGH_CONTEXT_USAGE_PERCENT) {
+					await logOp(ctx, "inject_suppressed_high_context", [], 0);
+					return;
+				}
+				tokenBudget = Math.min(
+					PI_MEM_MAX_INJECTED_TOKENS,
+					Math.max(0, contextWindow - estimate - PI_MEM_MIN_CONTEXT_RESERVE_TOKENS),
+				);
+				if (tokenBudget <= 0) {
+					await logOp(ctx, "inject_suppressed_budget", [], 0);
+					return;
+				}
+			}
+
 			const results = await store.search({
 				query: pendingPrompt,
 				limit: settings.maxInjected,
@@ -147,18 +187,22 @@ export function createPiMemExtension(options: PiMemExtensionOptions) {
 				cwd: ctx.cwd,
 				projectId: currentProjectId(ctx),
 			});
-			if (results.length === 0) return;
+			const injected = selectInjectedMemoriesWithinBudget(results, tokenBudget);
+			if (injected.length === 0) {
+				await logOp(ctx, "inject_suppressed_budget", [], 0);
+				return;
+			}
 			await logOp(
 				ctx,
-				"inject",
-				results.map((m) => m.id),
-				results.length,
+				injected.length < results.length ? "inject_capped" : "inject",
+				injected.map((m) => m.id),
+				injected.length,
 			);
 			const messages = [...event.messages];
 			messages.splice(findLastUserMessageIndex(event.messages), 0, {
 				role: "user",
 				content: [
-					{ type: "text", text: redactLikelySecrets(formatInjectedMemories(results), settings.redactMode) },
+					{ type: "text", text: redactLikelySecrets(formatInjectedMemories(injected), settings.redactMode) },
 				],
 				timestamp: Date.now(),
 			});

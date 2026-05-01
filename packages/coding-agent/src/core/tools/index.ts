@@ -51,6 +51,31 @@ export {
 	type ReadToolOptions,
 } from "./read.js";
 export {
+	createInsertAfterSymbolTool,
+	createInsertAfterSymbolToolDefinition,
+	createInsertBeforeSymbolTool,
+	createInsertBeforeSymbolToolDefinition,
+	createReadSymbolTool,
+	createReadSymbolToolDefinition,
+	createRenameSymbolTool,
+	createRenameSymbolToolDefinition,
+	createReplaceSymbolBodyTool,
+	createReplaceSymbolBodyToolDefinition,
+	createSafeDeleteSymbolTool,
+	createSafeDeleteSymbolToolDefinition,
+	createSymbolOverviewTool,
+	createSymbolOverviewToolDefinition,
+	type InsertSymbolToolInput,
+	type ReadSymbolToolInput,
+	type RenameSymbolToolInput,
+	type ReplaceSymbolBodyToolInput,
+	type SafeDeleteSymbolToolInput,
+	type SymbolOperations,
+	type SymbolOverviewToolInput,
+	type SymbolToolDetails,
+	type SymbolToolOptions,
+} from "./symbol-tools.js";
+export {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
 	formatSize,
@@ -76,12 +101,58 @@ import { createFindTool, createFindToolDefinition, type FindToolOptions } from "
 import { createGrepTool, createGrepToolDefinition, type GrepToolOptions } from "./grep.js";
 import { createLsTool, createLsToolDefinition, type LsToolOptions } from "./ls.js";
 import { createReadTool, createReadToolDefinition, type ReadToolOptions } from "./read.js";
+import {
+	createInsertAfterSymbolTool,
+	createInsertAfterSymbolToolDefinition,
+	createInsertBeforeSymbolTool,
+	createInsertBeforeSymbolToolDefinition,
+	createReadSymbolTool,
+	createReadSymbolToolDefinition,
+	createRenameSymbolTool,
+	createRenameSymbolToolDefinition,
+	createReplaceSymbolBodyTool,
+	createReplaceSymbolBodyToolDefinition,
+	createSafeDeleteSymbolTool,
+	createSafeDeleteSymbolToolDefinition,
+	createSymbolOverviewTool,
+	createSymbolOverviewToolDefinition,
+	type SymbolToolOptions,
+} from "./symbol-tools.js";
 import { createWriteTool, createWriteToolDefinition, type WriteToolOptions } from "./write.js";
 
 export type Tool = AgentTool<any>;
 export type ToolDef = ToolDefinition<any, any>;
-export type ToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls";
-export const allToolNames: Set<ToolName> = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
+export type ToolName =
+	| "read"
+	| "bash"
+	| "edit"
+	| "write"
+	| "grep"
+	| "find"
+	| "ls"
+	| "symbol_overview"
+	| "read_symbol"
+	| "replace_symbol_body"
+	| "insert_before_symbol"
+	| "insert_after_symbol"
+	| "rename_symbol"
+	| "safe_delete_symbol";
+export const allToolNames: Set<ToolName> = new Set([
+	"read",
+	"bash",
+	"edit",
+	"write",
+	"grep",
+	"find",
+	"ls",
+	"symbol_overview",
+	"read_symbol",
+	"replace_symbol_body",
+	"insert_before_symbol",
+	"insert_after_symbol",
+	"rename_symbol",
+	"safe_delete_symbol",
+]);
 
 export interface ToolsOptions {
 	read?: ReadToolOptions;
@@ -91,6 +162,7 @@ export interface ToolsOptions {
 	grep?: GrepToolOptions;
 	find?: FindToolOptions;
 	ls?: LsToolOptions;
+	symbol?: SymbolToolOptions;
 }
 
 export function createToolDefinition(toolName: ToolName, cwd: string, options?: ToolsOptions): ToolDef {
@@ -109,6 +181,20 @@ export function createToolDefinition(toolName: ToolName, cwd: string, options?: 
 			return createFindToolDefinition(cwd, options?.find);
 		case "ls":
 			return createLsToolDefinition(cwd, options?.ls);
+		case "symbol_overview":
+			return createSymbolOverviewToolDefinition(cwd, options?.symbol);
+		case "read_symbol":
+			return createReadSymbolToolDefinition(cwd, options?.symbol);
+		case "replace_symbol_body":
+			return createReplaceSymbolBodyToolDefinition(cwd, options?.symbol);
+		case "insert_before_symbol":
+			return createInsertBeforeSymbolToolDefinition(cwd, options?.symbol);
+		case "insert_after_symbol":
+			return createInsertAfterSymbolToolDefinition(cwd, options?.symbol);
+		case "rename_symbol":
+			return createRenameSymbolToolDefinition(cwd, options?.symbol);
+		case "safe_delete_symbol":
+			return createSafeDeleteSymbolToolDefinition(cwd, options?.symbol);
 		default:
 			throw new Error(`Unknown tool name: ${toolName}`);
 	}
@@ -130,6 +216,20 @@ export function createTool(toolName: ToolName, cwd: string, options?: ToolsOptio
 			return createFindTool(cwd, options?.find);
 		case "ls":
 			return createLsTool(cwd, options?.ls);
+		case "symbol_overview":
+			return createSymbolOverviewTool(cwd, options?.symbol);
+		case "read_symbol":
+			return createReadSymbolTool(cwd, options?.symbol);
+		case "replace_symbol_body":
+			return createReplaceSymbolBodyTool(cwd, options?.symbol);
+		case "insert_before_symbol":
+			return createInsertBeforeSymbolTool(cwd, options?.symbol);
+		case "insert_after_symbol":
+			return createInsertAfterSymbolTool(cwd, options?.symbol);
+		case "rename_symbol":
+			return createRenameSymbolTool(cwd, options?.symbol);
+		case "safe_delete_symbol":
+			return createSafeDeleteSymbolTool(cwd, options?.symbol);
 		default:
 			throw new Error(`Unknown tool name: ${toolName}`);
 	}
@@ -141,6 +241,13 @@ export function createCodingToolDefinitions(cwd: string, options?: ToolsOptions)
 		createBashToolDefinition(cwd, options?.bash),
 		createEditToolDefinition(cwd, options?.edit),
 		createWriteToolDefinition(cwd, options?.write),
+		createSymbolOverviewToolDefinition(cwd, options?.symbol),
+		createReadSymbolToolDefinition(cwd, options?.symbol),
+		createReplaceSymbolBodyToolDefinition(cwd, options?.symbol),
+		createInsertBeforeSymbolToolDefinition(cwd, options?.symbol),
+		createInsertAfterSymbolToolDefinition(cwd, options?.symbol),
+		createRenameSymbolToolDefinition(cwd, options?.symbol),
+		createSafeDeleteSymbolToolDefinition(cwd, options?.symbol),
 	];
 }
 
@@ -162,6 +269,13 @@ export function createAllToolDefinitions(cwd: string, options?: ToolsOptions): R
 		grep: createGrepToolDefinition(cwd, options?.grep),
 		find: createFindToolDefinition(cwd, options?.find),
 		ls: createLsToolDefinition(cwd, options?.ls),
+		symbol_overview: createSymbolOverviewToolDefinition(cwd, options?.symbol),
+		read_symbol: createReadSymbolToolDefinition(cwd, options?.symbol),
+		replace_symbol_body: createReplaceSymbolBodyToolDefinition(cwd, options?.symbol),
+		insert_before_symbol: createInsertBeforeSymbolToolDefinition(cwd, options?.symbol),
+		insert_after_symbol: createInsertAfterSymbolToolDefinition(cwd, options?.symbol),
+		rename_symbol: createRenameSymbolToolDefinition(cwd, options?.symbol),
+		safe_delete_symbol: createSafeDeleteSymbolToolDefinition(cwd, options?.symbol),
 	};
 }
 
@@ -171,6 +285,13 @@ export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
 		createBashTool(cwd, options?.bash),
 		createEditTool(cwd, options?.edit),
 		createWriteTool(cwd, options?.write),
+		createSymbolOverviewTool(cwd, options?.symbol),
+		createReadSymbolTool(cwd, options?.symbol),
+		createReplaceSymbolBodyTool(cwd, options?.symbol),
+		createInsertBeforeSymbolTool(cwd, options?.symbol),
+		createInsertAfterSymbolTool(cwd, options?.symbol),
+		createRenameSymbolTool(cwd, options?.symbol),
+		createSafeDeleteSymbolTool(cwd, options?.symbol),
 	];
 }
 
@@ -192,5 +313,12 @@ export function createAllTools(cwd: string, options?: ToolsOptions): Record<Tool
 		grep: createGrepTool(cwd, options?.grep),
 		find: createFindTool(cwd, options?.find),
 		ls: createLsTool(cwd, options?.ls),
+		symbol_overview: createSymbolOverviewTool(cwd, options?.symbol),
+		read_symbol: createReadSymbolTool(cwd, options?.symbol),
+		replace_symbol_body: createReplaceSymbolBodyTool(cwd, options?.symbol),
+		insert_before_symbol: createInsertBeforeSymbolTool(cwd, options?.symbol),
+		insert_after_symbol: createInsertAfterSymbolTool(cwd, options?.symbol),
+		rename_symbol: createRenameSymbolTool(cwd, options?.symbol),
+		safe_delete_symbol: createSafeDeleteSymbolTool(cwd, options?.symbol),
 	};
 }

@@ -254,8 +254,8 @@ export function createHaloExtension(options: HaloExtensionOptions = {}) {
 				const run = activeRun;
 				activeRun = undefined;
 				await endSpanOnce(writer, closedSpans, closingSpans, run.agent, {
-					statusCode: "STATUS_CODE_ERROR",
-					statusMessage: "Session shut down before agent completed",
+					statusCode: run.errorMessage ? "STATUS_CODE_ERROR" : "STATUS_CODE_OK",
+					statusMessage: run.errorMessage ?? "Session shut down without agent_end event",
 				});
 			}
 		});

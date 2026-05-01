@@ -59,6 +59,8 @@ function formatAuthor(author?: GhMetadata["author"]): string | undefined {
 }
 
 export default function promptUrlWidgetExtension(pi: ExtensionAPI) {
+	let widgetGeneration = 0;
+	const sessionIdFor = (ctx: ExtensionContext) => ctx.sessionManager.getSessionId();
 	const setWidget = (ctx: ExtensionContext, match: PromptMatch, title?: string, authorText?: string) => {
 		ctx.ui.setWidget("prompt-url", (_tui, thm) => {
 			const titleText = title ? thm.fg("accent", title) : thm.fg("accent", match.url);
@@ -91,6 +93,19 @@ export default function promptUrlWidgetExtension(pi: ExtensionAPI) {
 		}
 	};
 
+	const refreshMetadata = (ctx: ExtensionContext, match: PromptMatch) => {
+		const generation = ++widgetGeneration;
+		const sessionId = sessionIdFor(ctx);
+		void fetchGhMetadata(pi, match.kind, match.url).then((meta) => {
+			if (generation !== widgetGeneration) return;
+			if (sessionIdFor(ctx) !== sessionId) return;
+			const title = meta?.title?.trim();
+			const authorText = formatAuthor(meta?.author);
+			setWidget(ctx, match, title, authorText);
+			applySessionName(ctx, match, title);
+		});
+	};
+
 	pi.on("before_agent_start", async (event, ctx) => {
 		if (!ctx.hasUI) return;
 		const match = extractPromptMatch(event.prompt);
@@ -100,12 +115,7 @@ export default function promptUrlWidgetExtension(pi: ExtensionAPI) {
 
 		setWidget(ctx, match);
 		applySessionName(ctx, match);
-		void fetchGhMetadata(pi, match.kind, match.url).then((meta) => {
-			const title = meta?.title?.trim();
-			const authorText = formatAuthor(meta?.author);
-			setWidget(ctx, match, title, authorText);
-			applySessionName(ctx, match, title);
-		});
+		refreshMetadata(ctx, match);
 	});
 
 	pi.on("session_switch", async (_event, ctx) => {
@@ -138,18 +148,14 @@ export default function promptUrlWidgetExtension(pi: ExtensionAPI) {
 		const text = getUserText(content);
 		const match = text ? extractPromptMatch(text) : undefined;
 		if (!match) {
+			widgetGeneration++;
 			ctx.ui.setWidget("prompt-url", undefined);
 			return;
 		}
 
 		setWidget(ctx, match);
 		applySessionName(ctx, match);
-		void fetchGhMetadata(pi, match.kind, match.url).then((meta) => {
-			const title = meta?.title?.trim();
-			const authorText = formatAuthor(meta?.author);
-			setWidget(ctx, match, title, authorText);
-			applySessionName(ctx, match, title);
-		});
+		refreshMetadata(ctx, match);
 	};
 
 	pi.on("session_start", async (_event, ctx) => {

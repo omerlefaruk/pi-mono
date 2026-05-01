@@ -194,7 +194,7 @@ export function printHelp(extensionFlags?: ExtensionFlag[]): void {
 					})
 					.join("\n")}\n`
 			: "";
-	console.log(`${chalk.bold(APP_NAME)} - AI coding assistant with read, bash, edit, write tools
+	console.log(`${chalk.bold(APP_NAME)} - AI coding assistant with file, shell, text-editing, and symbolic code tools
 
 ${chalk.bold("Usage:")}
   ${APP_NAME} [options] [@files...] [messages...]
@@ -337,8 +337,15 @@ ${chalk.bold("Built-in Tool Names:")}
   bash   - Execute bash commands
   edit   - Edit files with find/replace
   write  - Write files (creates/overwrites)
-  grep   - Search file contents (read-only, off by default)
-  find   - Find files by glob pattern (read-only, off by default)
-  ls     - List directory contents (read-only, off by default)
+  grep                 - Search file contents (read-only, off by default)
+  find                 - Find files by glob pattern (read-only, off by default)
+  ls                   - List directory contents (read-only, off by default)
+  symbol_overview      - Get compact file/package outlines by symbols
+  read_symbol          - Read one symbol body or declaration on demand
+  replace_symbol_body  - Replace a symbol body while preserving its declaration
+  insert_before_symbol - Insert code before a symbol declaration
+  insert_after_symbol  - Insert code after a symbol declaration
+  rename_symbol        - Heuristically rename code identifier tokens in a file or project
+  safe_delete_symbol   - Delete a symbol after a heuristic code-token reference check
 `);
 }

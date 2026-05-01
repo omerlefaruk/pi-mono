@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { type Static, Type } from "typebox";
 import type { ExtensionAPI } from "../extensions/index.js";
 import { HaloTraceStore } from "./trace-store.js";
+import { summarizeHaloToolOutput } from "./trace-writer.js";
 import type { HaloTraceFilters } from "./types.js";
 
 const TraceFiltersSchema = Type.Object({
@@ -39,6 +40,13 @@ type ViewTraceInput = Static<typeof ViewTraceSchema>;
 type ViewSpansInput = Static<typeof ViewSpansSchema>;
 type SearchTraceInput = Static<typeof SearchTraceSchema>;
 
+function haloToolResult(toolName: string, result: unknown) {
+	return {
+		content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+		details: { summary: summarizeHaloToolOutput(toolName, { details: { result } }) },
+	};
+}
+
 export function registerHaloTraceTools(pi: ExtensionAPI, options: RegisterHaloTraceToolsOptions): void {
 	const getStore = async () => {
 		if (!existsSync(options.tracePath)) throw new Error(`HALO trace file does not exist yet: ${options.tracePath}`);
@@ -57,7 +65,7 @@ export function registerHaloTraceTools(pi: ExtensionAPI, options: RegisterHaloTr
 		parameters: DatasetOverviewSchema,
 		async execute(_toolCallId, params: DatasetOverviewInput) {
 			const result = (await getStore()).getOverview(toFilters(params.filters));
-			return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: { result } };
+			return haloToolResult("halo_get_dataset_overview", result);
 		},
 	});
 
@@ -74,7 +82,7 @@ export function registerHaloTraceTools(pi: ExtensionAPI, options: RegisterHaloTr
 				params.limit ?? 50,
 				params.offset ?? 0,
 			);
-			return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: { result } };
+			return haloToolResult("halo_query_traces", result);
 		},
 	});
 
@@ -86,7 +94,7 @@ export function registerHaloTraceTools(pi: ExtensionAPI, options: RegisterHaloTr
 		parameters: CountTracesSchema,
 		async execute(_toolCallId, params: CountTracesInput) {
 			const result = (await getStore()).countTraces(toFilters(params.filters));
-			return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: { result } };
+			return haloToolResult("halo_count_traces", result);
 		},
 	});
 
@@ -99,7 +107,7 @@ export function registerHaloTraceTools(pi: ExtensionAPI, options: RegisterHaloTr
 		parameters: ViewTraceSchema,
 		async execute(_toolCallId, params: ViewTraceInput) {
 			const result = await (await getStore()).viewTrace(params.trace_id);
-			return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: { result } };
+			return haloToolResult("halo_view_trace", result);
 		},
 	});
 
@@ -112,7 +120,7 @@ export function registerHaloTraceTools(pi: ExtensionAPI, options: RegisterHaloTr
 		parameters: ViewSpansSchema,
 		async execute(_toolCallId, params: ViewSpansInput) {
 			const result = await (await getStore()).viewSpans(params.trace_id, [...params.span_ids]);
-			return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: { result } };
+			return haloToolResult("halo_view_spans", result);
 		},
 	});
 
@@ -125,7 +133,7 @@ export function registerHaloTraceTools(pi: ExtensionAPI, options: RegisterHaloTr
 		parameters: SearchTraceSchema,
 		async execute(_toolCallId, params: SearchTraceInput) {
 			const result = await (await getStore()).searchTrace(params.trace_id, params.pattern);
-			return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: { result } };
+			return haloToolResult("halo_search_trace", result);
 		},
 	});
 }

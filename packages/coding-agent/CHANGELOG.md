@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added built-in symbolic code tools for compact symbol outlines, on-demand symbol reads, safer symbol-body replacement/insertion, heuristic project/file scoped code-token renames, and heuristic reference-checked safe deletion.
 - Added HALO-compatible local trace capture, trace indexing/query utilities, and a HALO example extension for data-driven pi harness analysis.
 - Added Pi Mem settings controls to interactive `/settings` for enable/auto-extract/auto-inject/privacy plus `storageBackend` and `extractionMode`.
 - Added docs coverage for Pi Mem namespace/project scoping, maintenance/purge safeguards, viewer flows, and tool surface (`pi_mem_maintenance`, `pi_mem_stats`, `pi_mem_feedback`).

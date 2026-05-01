@@ -3,8 +3,8 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 function isAssistantMessage(message: unknown): message is AssistantMessage {
 	if (!message || typeof message !== "object") return false;
-	const role = (message as { role?: unknown }).role;
-	return role === "assistant";
+	const candidate = message as { role?: unknown; usage?: unknown };
+	return candidate.role === "assistant" && !!candidate.usage && typeof candidate.usage === "object";
 }
 
 export default function (pi: ExtensionAPI) {

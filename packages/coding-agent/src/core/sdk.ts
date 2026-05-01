@@ -266,7 +266,19 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		thinkingLevel = "off";
 	}
 
-	const defaultActiveToolNames: ToolName[] = ["read", "bash", "edit", "write"];
+	const defaultActiveToolNames: ToolName[] = [
+		"read",
+		"bash",
+		"edit",
+		"write",
+		"symbol_overview",
+		"read_symbol",
+		"replace_symbol_body",
+		"insert_before_symbol",
+		"insert_after_symbol",
+		"rename_symbol",
+		"safe_delete_symbol",
+	];
 	const allowedToolNames = options.tools ?? (options.noTools === "all" ? [] : undefined);
 	const initialActiveToolNames: string[] = options.tools
 		? [...options.tools]
