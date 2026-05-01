@@ -25,6 +25,8 @@ const DISCOVERY_ATTR_TRUNCATION_CHARS = 4096;
 const SURGICAL_ATTR_TRUNCATION_CHARS = 16384;
 const VIEW_TRACE_CHAR_BUDGET = 150_000;
 const OVERSIZED_TOP_SPAN_NAMES = 10;
+const SEARCH_MATCH_LIMIT = 20;
+const SEARCH_EXCERPT_CHARS = 1200;
 
 const NOISY_FLAT_PROJECTION_RE = /^(?:llm\.(?:input|output)_messages|mcp\.tools)\.\d+\./;
 
@@ -86,6 +88,7 @@ export class HaloTraceStore {
 				total_input_tokens: 0,
 				total_output_tokens: 0,
 				sample_trace_ids: [],
+				error_breakdown: createErrorBreakdown(rows),
 				index_health: this.indexHealth(),
 			};
 		}
@@ -105,6 +108,7 @@ export class HaloTraceStore {
 			total_input_tokens: rows.reduce((sum, row) => sum + row.total_input_tokens, 0),
 			total_output_tokens: rows.reduce((sum, row) => sum + row.total_output_tokens, 0),
 			sample_trace_ids: rows.slice(0, OVERVIEW_SAMPLE_TRACE_IDS).map((row) => row.trace_id),
+			error_breakdown: createErrorBreakdown(rows),
 			index_health: this.indexHealth(),
 		};
 	}
@@ -136,26 +140,30 @@ export class HaloTraceStore {
 	async searchTrace(traceId: string, pattern: string): Promise<HaloTraceSearchResult> {
 		const row = this.requireRow(traceId);
 		const matches: string[] = [];
+		let matchCount = 0;
 		const file = await open(this.tracePath, "r");
 		try {
 			for (let i = 0; i < row.byte_offsets.length; i++) {
 				const raw = await readSlice(file, row.byte_offsets[i] ?? 0, row.byte_lengths[i] ?? 0);
-				if (raw.includes(pattern)) {
-					try {
-						matches.push(
-							JSON.stringify(
-								truncateSpanAttributes(JSON.parse(raw) as HaloSpanRecord, DISCOVERY_ATTR_TRUNCATION_CHARS),
-							),
-						);
-					} catch {
-						matches.push(`${raw.slice(0, DISCOVERY_ATTR_TRUNCATION_CHARS)}... [HALO corrupt span slice]`);
-					}
-				}
+				if (!raw.includes(pattern)) continue;
+				matchCount++;
+				if (matches.length >= SEARCH_MATCH_LIMIT) continue;
+				matches.push(summarizeSearchMatch(raw, pattern));
 			}
 		} finally {
 			await file.close();
 		}
-		return { trace_id: traceId, match_count: matches.length, matches };
+		if (matchCount > matches.length) {
+			matches.push(
+				JSON.stringify({
+					__halo_search_truncated: true,
+					shown_matches: matches.length,
+					total_matches: matchCount,
+					hint: "Use a narrower pattern or halo_view_spans on the span ids above.",
+				}),
+			);
+		}
+		return { trace_id: traceId, match_count: matchCount, matches };
 	}
 
 	async renderTrace(traceId: string, budget = 32_000): Promise<string> {
@@ -247,6 +255,25 @@ function toSummary(row: HaloTraceIndexRow): HaloTraceSummary {
 		total_input_tokens: row.total_input_tokens,
 		total_output_tokens: row.total_output_tokens,
 		agent_names: row.agent_names,
+		error_span_count: row.error_span_count,
+		tool_error_count: row.tool_error_count,
+		llm_error_count: row.llm_error_count,
+		agent_error_count: row.agent_error_count,
+		final_answer_present: row.final_answer_present,
+		completed: row.completed,
+		cancelled: row.cancelled,
+	};
+}
+
+function createErrorBreakdown(rows: HaloTraceIndexRow[]): NonNullable<HaloDatasetOverview["error_breakdown"]> {
+	return {
+		error_spans: rows.reduce((sum, row) => sum + (row.error_span_count ?? (row.has_errors ? 1 : 0)), 0),
+		tool_error_spans: rows.reduce((sum, row) => sum + (row.tool_error_count ?? 0), 0),
+		llm_error_spans: rows.reduce((sum, row) => sum + (row.llm_error_count ?? 0), 0),
+		agent_error_spans: rows.reduce((sum, row) => sum + (row.agent_error_count ?? 0), 0),
+		completed_traces: rows.filter((row) => row.completed).length,
+		cancelled_traces: rows.filter((row) => row.cancelled).length,
+		traces_with_final_answer: rows.filter((row) => row.final_answer_present).length,
 	};
 }
 
@@ -287,6 +314,39 @@ function safeJson(value: unknown): string | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+function summarizeSearchMatch(raw: string, pattern: string): string {
+	try {
+		const span = JSON.parse(raw) as HaloSpanRecord;
+		return JSON.stringify({
+			span_id: span.span_id,
+			parent_span_id: span.parent_span_id,
+			name: span.name,
+			status: span.status,
+			start_time: span.start_time,
+			end_time: span.end_time,
+			tool_name: span.attributes["tool.name"],
+			model_name: span.attributes["inference.llm.model_name"] ?? span.attributes["llm.model_name"],
+			turn_index: span.attributes["pi.turn_index"],
+			input_tokens: span.attributes["inference.llm.input_tokens"],
+			output_tokens: span.attributes["inference.llm.output_tokens"],
+			excerpt: excerptAround(raw, pattern, SEARCH_EXCERPT_CHARS),
+		});
+	} catch {
+		return JSON.stringify({ corrupt_span: true, excerpt: excerptAround(raw, pattern, SEARCH_EXCERPT_CHARS) });
+	}
+}
+
+function excerptAround(text: string, pattern: string, cap: number): string {
+	const index = pattern.length > 0 ? text.indexOf(pattern) : 0;
+	if (index < 0) return text.slice(0, cap);
+	const before = Math.floor((cap - pattern.length) / 2);
+	const start = Math.max(0, index - Math.max(0, before));
+	const end = Math.min(text.length, start + cap);
+	const prefix = start > 0 ? "..." : "";
+	const suffix = end < text.length ? "..." : "";
+	return `${prefix}${text.slice(start, end)}${suffix}`;
 }
 
 function createOversizedSummary(

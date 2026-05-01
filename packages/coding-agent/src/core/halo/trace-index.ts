@@ -6,6 +6,8 @@ const INDEX_SCHEMA_VERSION = 1;
 const INDEX_BUILD_RETRIES = 2;
 const ATOMIC_RENAME_RETRIES = 5;
 
+const activeIndexBuilds = new Map<string, Promise<void>>();
+
 interface RowAccumulator {
 	trace_id: string;
 	byte_offsets: number[];
@@ -20,6 +22,13 @@ interface RowAccumulator {
 	total_input_tokens: number;
 	total_output_tokens: number;
 	project_id?: string;
+	error_span_count: number;
+	tool_error_count: number;
+	llm_error_count: number;
+	agent_error_count: number;
+	final_answer_present: boolean;
+	completed: boolean;
+	cancelled: boolean;
 }
 
 interface ScanResult {
@@ -72,6 +81,18 @@ export async function buildHaloTraceIndex(
 	sourceSize?: number,
 	sourceMtimeMs?: number,
 ): Promise<void> {
+	return singleflightIndexBuild(indexPath, () =>
+		buildHaloTraceIndexUnsafe(tracePath, indexPath, metaPath, sourceSize, sourceMtimeMs),
+	);
+}
+
+async function buildHaloTraceIndexUnsafe(
+	tracePath: string,
+	indexPath: string,
+	metaPath: string,
+	sourceSize?: number,
+	sourceMtimeMs?: number,
+): Promise<void> {
 	for (let attempt = 0; attempt <= INDEX_BUILD_RETRIES; attempt++) {
 		const startedAt = Date.now();
 		const before =
@@ -101,6 +122,16 @@ export async function buildHaloTraceIndex(
 		await writeTextAtomic(metaPath, JSON.stringify(meta));
 		return;
 	}
+}
+
+function singleflightIndexBuild(indexPath: string, build: () => Promise<void>): Promise<void> {
+	const existing = activeIndexBuilds.get(indexPath);
+	if (existing) return existing;
+	const promise = build().finally(() => {
+		activeIndexBuilds.delete(indexPath);
+	});
+	activeIndexBuilds.set(indexPath, promise);
+	return promise;
 }
 
 export async function loadHaloTraceIndex(indexPath: string): Promise<HaloTraceIndexRow[]> {
@@ -184,6 +215,13 @@ function createAccumulator(traceId: string): RowAccumulator {
 		agent_names: new Set(),
 		total_input_tokens: 0,
 		total_output_tokens: 0,
+		error_span_count: 0,
+		tool_error_count: 0,
+		llm_error_count: 0,
+		agent_error_count: 0,
+		final_answer_present: false,
+		completed: false,
+		cancelled: false,
 	};
 }
 
@@ -193,7 +231,21 @@ function absorbSpan(acc: RowAccumulator, span: HaloSpanRecord, byteOffset: numbe
 	acc.span_count++;
 	if (!acc.start_time || span.start_time < acc.start_time) acc.start_time = span.start_time;
 	if (!acc.end_time || span.end_time > acc.end_time) acc.end_time = span.end_time;
-	if (span.status.code === "STATUS_CODE_ERROR") acc.has_errors = true;
+	const observationKind = span.attributes["inference.observation_kind"];
+	const isError = span.status.code === "STATUS_CODE_ERROR";
+	if (isError) {
+		acc.has_errors = true;
+		acc.error_span_count++;
+		if (observationKind === "TOOL") acc.tool_error_count++;
+		else if (observationKind === "LLM") acc.llm_error_count++;
+		else if (observationKind === "AGENT") acc.agent_error_count++;
+	}
+	const statusMessage = span.status.message ?? "";
+	if (/shut down before|aborted|cancelled/i.test(statusMessage)) acc.cancelled = true;
+	if (observationKind === "AGENT" && span.status.code === "STATUS_CODE_OK") acc.completed = true;
+	if (observationKind === "LLM" && span.status.code === "STATUS_CODE_OK" && hasFinalAssistantText(span)) {
+		acc.final_answer_present = true;
+	}
 
 	const service = span.resource.attributes["service.name"];
 	if (typeof service === "string") acc.service_names.add(service);
@@ -224,7 +276,36 @@ function finalizeAccumulator(acc: RowAccumulator): HaloTraceIndexRow {
 		total_output_tokens: acc.total_output_tokens,
 		project_id: acc.project_id,
 		agent_names: [...acc.agent_names].sort(),
+		error_span_count: acc.error_span_count,
+		tool_error_count: acc.tool_error_count,
+		llm_error_count: acc.llm_error_count,
+		agent_error_count: acc.agent_error_count,
+		final_answer_present: acc.final_answer_present,
+		completed: acc.completed,
+		cancelled: acc.cancelled,
 	};
+}
+
+function hasFinalAssistantText(span: HaloSpanRecord): boolean {
+	const output = span.attributes["output.value"];
+	if (typeof output === "string" && output.trim().length > 0) {
+		const toolCalls = span.attributes["llm.tool_calls"];
+		return !Array.isArray(toolCalls) || toolCalls.length === 0;
+	}
+	const messages = span.attributes["llm.output_messages"];
+	if (!messages || typeof messages !== "object") return false;
+	const content = (messages as { content?: unknown }).content;
+	return (
+		Array.isArray(content) &&
+		content.some(
+			(part) =>
+				part &&
+				typeof part === "object" &&
+				(part as { type?: unknown }).type === "text" &&
+				typeof (part as { text?: unknown }).text === "string" &&
+				((part as { text: string }).text.trim().length > 0),
+		)
+	);
 }
 
 function isValidIndexRow(row: unknown): row is HaloTraceIndexRow {

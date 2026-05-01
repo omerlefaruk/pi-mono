@@ -51,6 +51,13 @@ export interface HaloTraceIndexRow {
 	total_output_tokens: number;
 	project_id?: string;
 	agent_names: string[];
+	error_span_count?: number;
+	tool_error_count?: number;
+	llm_error_count?: number;
+	agent_error_count?: number;
+	final_answer_present?: boolean;
+	completed?: boolean;
+	cancelled?: boolean;
 }
 
 export interface HaloTraceIndexMeta {
@@ -77,6 +84,13 @@ export interface HaloTraceSummary {
 	total_input_tokens: number;
 	total_output_tokens: number;
 	agent_names: string[];
+	error_span_count?: number;
+	tool_error_count?: number;
+	llm_error_count?: number;
+	agent_error_count?: number;
+	final_answer_present?: boolean;
+	completed?: boolean;
+	cancelled?: boolean;
 }
 
 export interface HaloTraceQueryResult {
@@ -100,6 +114,15 @@ export interface HaloDatasetOverview {
 	total_input_tokens: number;
 	total_output_tokens: number;
 	sample_trace_ids: string[];
+	error_breakdown?: {
+		error_spans: number;
+		tool_error_spans: number;
+		llm_error_spans: number;
+		agent_error_spans: number;
+		completed_traces: number;
+		cancelled_traces: number;
+		traces_with_final_answer: number;
+	};
 	index_health?: {
 		corrupt_span_count: number;
 		corrupt_span_bytes: number;

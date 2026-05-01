@@ -13,7 +13,7 @@
  * Modes use this class and add their own I/O layer on top.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import type {
 	Agent,
@@ -1010,6 +1010,7 @@ export class AgentSession {
 			if (expandPromptTemplates) {
 				expandedText = this._expandSkillCommand(expandedText);
 				expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
+				expandedText = this._rewriteBarePathPrompt(expandedText);
 			}
 
 			// If streaming, queue via steer() or followUp() based on option
@@ -1128,6 +1129,17 @@ export class AgentSession {
 		if (!commandName || !this._extensionRunner.getCommand(commandName)) return text;
 		const args = match[2];
 		return args ? `/${commandName} ${args}` : `/${commandName}`;
+	}
+
+	private _rewriteBarePathPrompt(text: string): string {
+		const path = extractBarePathInput(text, this._cwd);
+		if (!path) return text;
+		return [
+			`The user provided this filesystem path as their entire message: ${path}`,
+			"Do not execute it as a shell command.",
+			"First inspect whether it exists and what type it is using safe file/directory inspection tools.",
+			"If it is a file, read or summarize it. If it is a directory, list or inspect it. Ask for confirmation before running anything from it.",
+		].join("\n");
 	}
 
 	/**
@@ -3174,6 +3186,40 @@ export class AgentSession {
 	get extensionRunner(): ExtensionRunner {
 		return this._extensionRunner;
 	}
+}
+
+export function extractBarePathInput(text: string, cwd = process.cwd()): string | undefined {
+	const trimmed = text.trim();
+	if (!trimmed || /[\n\r;&|<>`$]/.test(trimmed)) return undefined;
+	const unquoted = stripBalancedQuotes(trimmed);
+	if (!unquoted || /[\n\r;&|<>`$]/.test(unquoted)) return undefined;
+	if (looksLikeExistingPath(unquoted, cwd) || looksLikeStandalonePath(unquoted)) return unquoted;
+	return undefined;
+}
+
+function stripBalancedQuotes(text: string): string {
+	if (text.length >= 2) {
+		const first = text[0];
+		const last = text[text.length - 1];
+		if ((first === '"' && last === '"') || (first === "'" && last === "'")) return text.slice(1, -1).trim();
+	}
+	return text;
+}
+
+function looksLikeExistingPath(text: string, cwd: string): boolean {
+	try {
+		lstatSync(resolve(cwd, text));
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function looksLikeStandalonePath(text: string): boolean {
+	if (/^[A-Za-z]:[\\/]/.test(text)) return true;
+	if (/^~?[\\/]/.test(text)) return true;
+	if (/^\.\.?[\\/]/.test(text)) return true;
+	return text.includes("\\") || text.includes("/");
 }
 
 function findGitRoot(startDir: string): string | undefined {

@@ -26,6 +26,7 @@ export interface HaloExtensionOptions {
 
 interface ActiveRun {
 	agent: ReturnType<HaloTraceWriter["startSpan"]>;
+	errorMessage?: string;
 }
 
 interface HaloActiveContextEvent {
@@ -147,9 +148,11 @@ export function createHaloExtension(options: HaloExtensionOptions = {}) {
 			if (!turn) return;
 			activeTurns.delete(event.turnIndex);
 			const message = event.message;
+			const errorMessage = assistantErrorMessage(message);
+			if (activeRun && errorMessage) activeRun.errorMessage = errorMessage;
 			await endSpanOnce(writer, closedSpans, closingSpans, turn, {
 				statusCode: assistantStopReason(message) === "error" ? "STATUS_CODE_ERROR" : "STATUS_CODE_OK",
-				statusMessage: assistantErrorMessage(message),
+				statusMessage: errorMessage,
 				attributes: {
 					"output.value": agentMessageText(message),
 					"llm.output_messages": summarizeAgentMessage(message),
@@ -219,7 +222,7 @@ export function createHaloExtension(options: HaloExtensionOptions = {}) {
 			if (!activeRun) return;
 			const run = activeRun;
 			activeRun = undefined;
-			const errorMessage = firstAssistantError(event.messages);
+			const errorMessage = run.errorMessage;
 			await endSpanOnce(writer, closedSpans, closingSpans, run.agent, {
 				statusCode: errorMessage ? "STATUS_CODE_ERROR" : "STATUS_CODE_OK",
 				statusMessage: errorMessage ?? "",
@@ -419,14 +422,6 @@ function assistantStopReason(message: AgentMessage): string | undefined {
 
 function assistantErrorMessage(message: AgentMessage): string {
 	return message.role === "assistant" ? (message.errorMessage ?? "") : "";
-}
-
-function firstAssistantError(messages: AgentMessage[]): string | undefined {
-	for (const message of messages) {
-		if (message.role === "assistant" && message.stopReason === "error")
-			return message.errorMessage ?? "assistant error";
-	}
-	return undefined;
 }
 
 function toolResultText(result: unknown): string {
