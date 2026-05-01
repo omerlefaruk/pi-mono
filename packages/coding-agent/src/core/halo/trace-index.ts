@@ -303,7 +303,7 @@ function hasFinalAssistantText(span: HaloSpanRecord): boolean {
 				typeof part === "object" &&
 				(part as { type?: unknown }).type === "text" &&
 				typeof (part as { text?: unknown }).text === "string" &&
-				((part as { text: string }).text.trim().length > 0),
+				(part as { text: string }).text.trim().length > 0,
 		)
 	);
 }

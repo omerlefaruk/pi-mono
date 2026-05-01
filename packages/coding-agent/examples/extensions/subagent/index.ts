@@ -17,10 +17,16 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
-import type { Message } from "@mariozechner/pi-ai";
+import type { Api, Message, Model } from "@mariozechner/pi-ai";
 import { StringEnum } from "@mariozechner/pi-ai";
-import { type ExtensionAPI, getMarkdownTheme, withFileMutationQueue } from "@mariozechner/pi-coding-agent";
-import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
+import {
+	AuthStorage,
+	type ExtensionAPI,
+	getMarkdownTheme,
+	ModelRegistry,
+	withFileMutationQueue,
+} from "@mariozechner/pi-coding-agent";
+import { Container, fuzzyFilter, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
 
@@ -233,6 +239,61 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	return { command: "pi", args };
 }
 
+interface ModelPreflightResult {
+	modelArg?: string;
+	message?: string;
+	error?: string;
+}
+
+function modelCliArg(model: Model<Api>): string {
+	return `${model.provider}/${model.id}`;
+}
+
+function resolveRequestedModel(registry: ModelRegistry, requested: string): Model<Api> | undefined {
+	const allModels = registry.getAll();
+	const slashIndex = requested.indexOf("/");
+	if (slashIndex !== -1) {
+		const maybeProvider = requested.slice(0, slashIndex).toLowerCase();
+		const pattern = requested.slice(slashIndex + 1);
+		const providerModels = allModels.filter((model) => model.provider.toLowerCase() === maybeProvider);
+		if (providerModels.length > 0) {
+			const exact = providerModels.find((model) => model.id.toLowerCase() === pattern.toLowerCase());
+			return exact ?? fuzzyFilter(providerModels, pattern, (model) => model.id)[0];
+		}
+	}
+
+	const exact = allModels.find(
+		(model) =>
+			model.id.toLowerCase() === requested.toLowerCase() ||
+			modelCliArg(model).toLowerCase() === requested.toLowerCase(),
+	);
+	if (exact) return exact;
+	return fuzzyFilter(allModels, requested, (model) => `${model.provider} ${model.id}`)[0];
+}
+
+function preflightSubagentModel(requestedModel: string | undefined): ModelPreflightResult {
+	if (!requestedModel) return {};
+	const registry = ModelRegistry.create(AuthStorage.create());
+	const requested = resolveRequestedModel(registry, requestedModel);
+	if (!requested)
+		return {
+			error: `Model "${requestedModel}" was not found. Use /model or pi --list-models to choose an available model.`,
+		};
+	if (registry.hasConfiguredAuth(requested)) return { modelArg: requestedModel };
+
+	const fallback = registry.getAvailable()[0];
+	if (!fallback) {
+		return {
+			error: `Model "${modelCliArg(requested)}" requires provider "${requested.provider}", but no auth is configured and no fallback model is available. Configure that provider or edit the agent model.`,
+		};
+	}
+
+	return {
+		modelArg: modelCliArg(fallback),
+		message: `Requested model "${modelCliArg(requested)}" has no configured auth; falling back to "${modelCliArg(fallback)}".`,
+	};
+}
+
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
 async function runSingleAgent(
@@ -262,8 +323,9 @@ async function runSingleAgent(
 		};
 	}
 
+	const modelPreflight = preflightSubagentModel(agent.model);
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
-	if (agent.model) args.push("--model", agent.model);
+	if (modelPreflight.modelArg) args.push("--model", modelPreflight.modelArg);
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 
 	let tmpPromptDir: string | null = null;
@@ -277,9 +339,19 @@ async function runSingleAgent(
 		messages: [],
 		stderr: "",
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-		model: agent.model,
+		model: modelPreflight.modelArg ?? agent.model,
 		step,
 	};
+
+	if (modelPreflight.error) {
+		return {
+			...currentResult,
+			exitCode: 1,
+			stderr: modelPreflight.error,
+			errorMessage: modelPreflight.error,
+		};
+	}
+	if (modelPreflight.message) currentResult.stderr = `${modelPreflight.message}\n`;
 
 	const emitUpdate = () => {
 		if (onUpdate) {

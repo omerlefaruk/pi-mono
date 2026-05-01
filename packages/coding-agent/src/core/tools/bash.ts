@@ -157,6 +157,148 @@ function looksLikeBarePathCommand(command: string): boolean {
 	return /^(?:[A-Za-z]:[\\/]|\/|~\/|\.\.?[\\/])/.test(candidate);
 }
 
+function msysSlashCommandName(command: string): string | undefined {
+	const trimmed = command.trim();
+	return trimmed.match(
+		/^["']?(?:[A-Za-z]:\/Program Files\/Git|\/[a-z]\/Program Files\/Git)\/([A-Za-z0-9_-]+)(?:["']?(?:\s|$))/i,
+	)?.[1];
+}
+
+const POWERSHELL_COMMAND_RE =
+	/(?:^|[\s|;&(])(?:Get-ChildItem|Set-Location|Select-Object|Where-Object|ForEach-Object|Format-Table|New-Item|Remove-Item|Copy-Item|Move-Item|Test-Path|Get-Content|Set-Content|Write-Host|Start-Process)\b/i;
+const POWERSHELL_VARIABLE_RE = /(?:^|\s)\$[A-Za-z_][\w:]*\s*=|\$env:[A-Za-z_][\w]*/i;
+const VITEST_RE = /(?:^|[\s;&|])(?:npx\s+)?(?:vitest|vite-node\s+.*vitest|\.\/node_modules\/\.bin\/vitest)\b/i;
+
+function classifyBashCommand(command: string): string | undefined {
+	const convertedSlashCommand = msysSlashCommandName(command);
+	if (convertedSlashCommand) {
+		return `This looks like a slash command converted to a Git Bash path (${convertedSlashCommand}). Invoke slash commands from the pi input line, not through bash.`;
+	}
+	if (/^\s*(?:pwsh|powershell)(?:\.exe)?\s+-Command\b/i.test(command)) return undefined;
+	if (POWERSHELL_COMMAND_RE.test(command) || POWERSHELL_VARIABLE_RE.test(command)) {
+		return "This command looks like PowerShell syntax, but the bash tool runs a POSIX shell. Use POSIX shell syntax here, or explicitly run pwsh -Command if PowerShell is intended.";
+	}
+	if (looksLikeBarePathCommand(command)) {
+		return "Refusing to execute a bare path. Inspect the path with read/ls first, or run an explicit command with arguments if execution is intended.";
+	}
+	if (VITEST_RE.test(command) && /(?:^|\s)--runInBand(?:\s|$)/.test(command)) {
+		return "Vitest does not support Jest's --runInBand flag. Use a Vitest-supported profile such as --pool=forks --poolOptions.forks.singleFork=true, or omit the flag.";
+	}
+	if (process.platform === "win32" && /(?:^|[\s;&|])ln\s+-s\b/.test(command)) {
+		return "This command creates a symlink on Windows. Check Developer Mode/admin symlink privileges first, or use a copy/junction fallback for portable tests.";
+	}
+	return undefined;
+}
+
+function normalizeCommandForLoopGuard(command: string): string {
+	return command.trim().replace(/\s+/g, " ").slice(0, 500);
+}
+
+function normalizeFailureForLoopGuard(output: string): string {
+	return output
+		.replace(/\x1b\[[0-9;]*m/g, "")
+		.replace(/\b\d+(?:\.\d+)?\s*(?:ms|s|seconds?)\b/gi, "<duration>")
+		.replace(/\b0x[0-9a-f]+\b/gi, "<hex>")
+		.replace(/\b\d{4,}\b/g, "<number>")
+		.replace(/[A-Za-z]:[\\/][^\s)]+/g, "<path>")
+		.replace(/\/[^\s)]+/g, "<path>")
+		.replace(/\s+/g, " ")
+		.trim()
+		.slice(-1000);
+}
+
+interface FailedCommandSignature {
+	count: number;
+	lastFailure: string;
+}
+
+function formatRepeatedFailureMessage(command: string, failure: FailedCommandSignature): string {
+	return [
+		"Repeated bash failure detected. The same command has already failed twice with a similar error, so pi will not run it again without a changed command or new diagnostic step.",
+		`Command: ${command}`,
+		`Last failure: ${failure.lastFailure || "(no output)"}`,
+	].join("\n");
+}
+
+function isGitMutationCommand(command: string): boolean {
+	return /(?:^|[;&|]\s*)git\s+(?:commit|merge|cherry-pick|rebase)\b/.test(command);
+}
+
+function gitMutationVerb(command: string): string | undefined {
+	return command.match(/(?:^|[;&|]\s*)git\s+(commit|merge|cherry-pick|rebase)\b/)?.[1];
+}
+
+function isGitMutationContinuation(command: string): boolean {
+	return /\s--(?:continue|abort|skip)\b/.test(command);
+}
+
+async function runPreflightProbe(
+	ops: BashOperations,
+	command: string,
+	cwd: string,
+	env: NodeJS.ProcessEnv,
+): Promise<{ exitCode: number | null; output: string }> {
+	const chunks: Buffer[] = [];
+	const result = await ops.exec(command, cwd, {
+		onData: (data) => chunks.push(data),
+		timeout: 5,
+		env,
+	});
+	return { exitCode: result.exitCode, output: Buffer.concat(chunks).toString("utf-8").trim() };
+}
+
+async function runGitMutationPreflight(
+	command: string,
+	spawnContext: BashSpawnContext,
+	ops: BashOperations,
+): Promise<void> {
+	if (!isGitMutationCommand(command)) return;
+	const verb = gitMutationVerb(command);
+	const insideWorkTree = await runPreflightProbe(
+		ops,
+		"git rev-parse --is-inside-work-tree >/dev/null 2>&1",
+		spawnContext.cwd,
+		spawnContext.env,
+	);
+	if (insideWorkTree.exitCode !== 0) return;
+
+	const operationState = await runPreflightProbe(
+		ops,
+		'state=$(for p in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD REBASE_HEAD; do f=$(git rev-parse --git-path "$p" 2>/dev/null); if [ -e "$f" ]; then echo "$p"; fi; done; for d in rebase-merge rebase-apply; do f=$(git rev-parse --git-path "$d" 2>/dev/null); if [ -d "$f" ]; then echo "$d"; fi; done); if [ -z "$state" ]; then exit 0; else echo "$state"; exit 1; fi',
+		spawnContext.cwd,
+		spawnContext.env,
+	);
+	if (operationState.exitCode !== 0 && !isGitMutationContinuation(command)) {
+		throw new Error(
+			`Git mutation preflight failed: another git operation appears to be in progress (${operationState.output}). Resolve or abort it before starting ${verb}.`,
+		);
+	}
+
+	if (verb === "commit") {
+		const identity = await runPreflightProbe(
+			ops,
+			'test -n "$(git config --get user.name)" && test -n "$(git config --get user.email)"',
+			spawnContext.cwd,
+			spawnContext.env,
+		);
+		if (identity.exitCode !== 0) {
+			throw new Error(
+				"Git mutation preflight failed: committer identity is not configured. Set git user.name and user.email before running git commit.",
+			);
+		}
+	}
+
+	if ((verb === "merge" || verb === "cherry-pick" || verb === "rebase") && !isGitMutationContinuation(command)) {
+		if (verb === "rebase" && /\s--autostash\b/.test(command)) return;
+		const status = await runPreflightProbe(ops, "git status --porcelain", spawnContext.cwd, spawnContext.env);
+		if (status.exitCode === 0 && status.output) {
+			throw new Error(
+				`Git mutation preflight failed: worktree has uncommitted changes. Commit or stash the specific files before running git ${verb}.`,
+			);
+		}
+	}
+}
+
 export interface BashToolOptions {
 	/** Custom operations for command execution. Default: local shell */
 	operations?: BashOperations;
@@ -285,6 +427,7 @@ export function createBashToolDefinition(
 	const ops = options?.operations ?? createLocalBashOperations({ shellPath: options?.shellPath });
 	const commandPrefix = options?.commandPrefix;
 	const spawnHook = options?.spawnHook;
+	const failedCommands = new Map<string, FailedCommandSignature>();
 	return {
 		name: "bash",
 		label: "bash",
@@ -293,6 +436,9 @@ export function createBashToolDefinition(
 		promptGuidelines: [
 			"Use bash for commands and scripts, but prefer read/grep/find/ls for file exploration.",
 			"Do not execute a bare path with bash; inspect it with read/ls or ask for confirmation first.",
+			"Use POSIX shell syntax in bash; wrap PowerShell syntax explicitly with pwsh -Command when needed.",
+			"Before git commit/merge/cherry-pick/rebase, expect pi to run cheap preflight checks for identity, operation state, and dirty worktrees.",
+			"On Windows, avoid Jest-only flags such as --runInBand with Vitest and account for symlink privilege requirements.",
 		],
 		parameters: bashSchema,
 		async execute(
@@ -302,13 +448,18 @@ export function createBashToolDefinition(
 			onUpdate?,
 			_ctx?,
 		) {
-			if (looksLikeBarePathCommand(command)) {
-				throw new Error(
-					"Refusing to execute a bare path. Inspect the path with read/ls first, or run an explicit command with arguments if execution is intended.",
-				);
+			const commandIssue = classifyBashCommand(command);
+			if (commandIssue) throw new Error(commandIssue);
+
+			const loopGuardKey = normalizeCommandForLoopGuard(command);
+			const previousFailure = failedCommands.get(loopGuardKey);
+			if (previousFailure && previousFailure.count >= 2) {
+				throw new Error(formatRepeatedFailureMessage(loopGuardKey, previousFailure));
 			}
+
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
 			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook);
+			await runGitMutationPreflight(command, spawnContext, ops);
 			if (onUpdate) {
 				onUpdate({ content: [], details: undefined });
 			}
@@ -319,6 +470,20 @@ export function createBashToolDefinition(
 				const chunks: Buffer[] = [];
 				let chunksBytes = 0;
 				const maxChunksBytes = DEFAULT_MAX_BYTES * 2;
+
+				const recordFailure = (output: string) => {
+					const normalizedFailure = normalizeFailureForLoopGuard(output);
+					const current = failedCommands.get(loopGuardKey);
+					if (current && current.lastFailure === normalizedFailure) {
+						current.count += 1;
+					} else {
+						failedCommands.set(loopGuardKey, { count: 1, lastFailure: normalizedFailure });
+					}
+				};
+
+				const clearFailure = () => {
+					failedCommands.delete(loopGuardKey);
+				};
 
 				const ensureTempFile = () => {
 					if (tempFilePath) return;
@@ -397,8 +562,10 @@ export function createBashToolDefinition(
 						}
 						if (exitCode !== 0 && exitCode !== null) {
 							outputText += `\n\nCommand exited with code ${exitCode}`;
+							recordFailure(outputText);
 							reject(new Error(outputText));
 						} else {
+							clearFailure();
 							resolve({ content: [{ type: "text", text: outputText }], details });
 						}
 					})
@@ -410,13 +577,16 @@ export function createBashToolDefinition(
 						if (err.message === "aborted") {
 							if (output) output += "\n\n";
 							output += "Command aborted";
+							recordFailure(output);
 							reject(new Error(output));
 						} else if (err.message.startsWith("timeout:")) {
 							const timeoutSecs = err.message.split(":")[1];
 							if (output) output += "\n\n";
 							output += `Command timed out after ${timeoutSecs} seconds`;
+							recordFailure(output);
 							reject(new Error(output));
 						} else {
+							recordFailure(err.message);
 							reject(err);
 						}
 					});

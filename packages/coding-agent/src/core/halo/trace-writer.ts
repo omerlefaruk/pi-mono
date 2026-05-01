@@ -195,12 +195,43 @@ export function summarizeAgentMessage(message: AgentMessage): Record<string, unk
 }
 
 export function summarizeToolResult(result: ToolResultMessage): Record<string, unknown> {
+	if (result.toolName.startsWith("halo_")) {
+		return {
+			toolCallId: result.toolCallId,
+			toolName: result.toolName,
+			isError: result.isError,
+			content: summarizeHaloToolResultContent(result),
+			details: summarizeHaloToolOutput(result.toolName, { details: result.details }),
+		};
+	}
 	return {
 		toolCallId: result.toolCallId,
 		toolName: result.toolName,
 		isError: result.isError,
 		content: summarizeContent(result.content),
 		details: truncateUnknown(result.details, 4096),
+	};
+}
+
+function summarizeHaloToolResultContent(result: ToolResultMessage): Record<string, unknown> {
+	if (typeof result.content === "string") {
+		return {
+			type: "halo_compact_content",
+			text_part_count: 1,
+			image_part_count: 0,
+			text_bytes: Buffer.byteLength(result.content, "utf8"),
+			message: "HALO tool content omitted from trace; use the original tool result or halo_view_spans for details.",
+		};
+	}
+	const textParts = result.content.filter((part) => part.type === "text");
+	const imageParts = result.content.filter((part) => part.type === "image");
+	const textBytes = textParts.reduce((total, part) => total + Buffer.byteLength(part.text, "utf8"), 0);
+	return {
+		type: "halo_compact_content",
+		text_part_count: textParts.length,
+		image_part_count: imageParts.length,
+		text_bytes: textBytes,
+		message: "HALO tool content omitted from trace; use the original tool result or halo_view_spans for details.",
 	};
 }
 
